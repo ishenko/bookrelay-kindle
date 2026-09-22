@@ -21,3 +21,4 @@ class Pairing:
     code: str
     device_id: str
     expires_at: str
+    kindle_email: str

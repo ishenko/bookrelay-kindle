@@ -44,14 +44,15 @@ class FakeMailer:
 class ApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_pair_search_and_authenticated_delivery(self):
         with tempfile.TemporaryDirectory() as tmp:
-            app = create_app(Path(tmp) / "relay.sqlite3", source=FakeSource(), mailer=FakeMailer(), pairing_admin_key="test-owner-key", delivery_enabled=True)
+            app = create_app(Path(tmp) / "relay.sqlite3", source=FakeSource(), mailer=FakeMailer(), pairing_admin_key="test-owner-key", default_kindle_email="reader@kindle.com", delivery_enabled=True)
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-                start = await client.post("/v1/pair/start", json={"device_id": "pw12"})
+                start = await client.post("/v1/pair/start", json={"device_id": "pw12", "admin_key": "test-owner-key"})
                 self.assertEqual(start.status_code, 200)
                 code = start.json()["code"]
-                claimed = await client.post("/v1/pair/claim", json={"code": code, "kindle_email": "reader@kindle.com", "admin_key": "test-owner-key"})
+                claimed = await client.post("/v1/pair/claim", json={"code": code})
                 self.assertEqual(claimed.status_code, 200)
-                token = (await client.get(f"/v1/pair/status/{code}")).json()["token"]
+                self.assertEqual(claimed.json()["kindle_email"], "reader@kindle.com")
+                token = claimed.json()["token"]
                 auth = {"Authorization": f"Bearer {token}"}
                 self.assertEqual((await client.get("/v1/search", params={"q": "book"}, headers=auth)).status_code, 200)
                 delivery = await client.post(
@@ -62,6 +63,27 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(delivery.status_code, 202)
                 job = await client.get(f"/v1/deliveries/{delivery.json()['id']}", headers={"Authorization": f"Bearer {token}"})
                 self.assertEqual(job.json()["status"], "sent")
+
+    async def test_pair_start_requires_owner_key_and_claim_uses_server_email(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app = create_app(Path(tmp) / "relay.sqlite3", source=FakeSource(), mailer=FakeMailer(), pairing_admin_key="test-owner-key", default_kindle_email="reader@kindle.com")
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+                denied = await client.post("/v1/pair/start", json={"device_id": "pw12", "admin_key": "wrong"})
+                self.assertEqual(denied.status_code, 403)
+                start = await client.post("/v1/pair/start", json={"device_id": "pw12", "admin_key": "test-owner-key"})
+                self.assertEqual(start.status_code, 200)
+                code = start.json()["code"]
+                extra_fields = await client.post("/v1/pair/claim", json={"code": code, "kindle_email": "attacker@example.com", "admin_key": "test-owner-key"})
+                self.assertEqual(extra_fields.status_code, 422)
+                claimed = await client.post("/v1/pair/claim", json={"code": code})
+                self.assertEqual(claimed.json()["kindle_email"], "reader@kindle.com")
+
+    async def test_pairing_requires_default_kindle_email(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app = create_app(Path(tmp) / "relay.sqlite3", source=FakeSource(), mailer=FakeMailer(), pairing_admin_key="test-owner-key")
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+                start = await client.post("/v1/pair/start", json={"device_id": "pw12", "admin_key": "test-owner-key"})
+                self.assertEqual(start.status_code, 503)
 
     async def test_delivery_requires_pairing_token(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -22,7 +22,6 @@ typedef struct {
     GtkWidget *next_page;
     guint page;
     guint active_tasks;
-    gboolean pairing_poll_pending;
 } App;
 
 typedef struct {
@@ -41,8 +40,7 @@ typedef struct {
 typedef enum {
     TASK_SEARCH,
     TASK_CATEGORIES,
-    TASK_START_PAIRING,
-    TASK_PAIR_STATUS,
+    TASK_PAIR_CLAIM,
     TASK_SEND,
     TASK_DELIVERY_STATUS,
     TASK_COVER
@@ -54,7 +52,6 @@ typedef struct {
     gchar *base_url;
     gchar *token;
     gchar *query;
-    gchar *device_id;
     gchar *code;
     gchar *book_id;
     gchar *title;
@@ -65,9 +62,7 @@ typedef struct {
     DeliveryPoll *delivery_poll;
     GPtrArray *books;
     GPtrArray *categories;
-    BookRelayPairing *pairing;
-    gchar *result_token;
-    gchar *email;
+    BookRelayClaim *claim;
     gchar *state;
     GByteArray *cover_bytes;
     GError *error;
@@ -89,7 +84,6 @@ static void async_task_free(AsyncTask *task) {
     g_free(task->base_url);
     g_free(task->token);
     g_free(task->query);
-    g_free(task->device_id);
     g_free(task->code);
     g_free(task->book_id);
     g_free(task->title);
@@ -98,9 +92,7 @@ static void async_task_free(AsyncTask *task) {
     if (task->image) g_object_unref(task->image);
     if (task->books) g_ptr_array_free(task->books, TRUE);
     if (task->categories) g_ptr_array_free(task->categories, TRUE);
-    bookrelay_pairing_free(task->pairing);
-    g_free(task->result_token);
-    g_free(task->email);
+    bookrelay_claim_free(task->claim);
     g_free(task->state);
     if (task->cover_bytes) g_byte_array_free(task->cover_bytes, TRUE);
     if (task->error) g_error_free(task->error);
@@ -124,11 +116,8 @@ static gpointer async_task_worker(gpointer userdata) {
         case TASK_CATEGORIES:
             task->categories = bookrelay_api_categories(task->base_url, task->token, &task->error);
             break;
-        case TASK_START_PAIRING:
-            task->pairing = bookrelay_api_start_pairing(task->base_url, task->device_id, &task->error);
-            break;
-        case TASK_PAIR_STATUS:
-            task->result_token = bookrelay_api_pair_status(task->base_url, task->code, &task->email, &task->error);
+        case TASK_PAIR_CLAIM:
+            task->claim = bookrelay_api_pair_claim(task->base_url, task->code, &task->error);
             break;
         case TASK_SEND:
             task->job_id = bookrelay_api_send(task->base_url, task->token, task->book_id, task->title, &task->error);
@@ -327,26 +316,36 @@ static void next_page_clicked(GtkButton *button, gpointer userdata) {
     search_page(app, app->page + 1);
 }
 
-static gboolean poll_pairing(gpointer userdata) {
-    App *app = userdata;
-    const gchar *code = g_object_get_data(G_OBJECT(app->window), "pairing-code");
-    AsyncTask *task;
-    if (!code || app->pairing_poll_pending) return TRUE;
-    app->pairing_poll_pending = TRUE;
-    task = async_task_new(app, TASK_PAIR_STATUS);
-    copy_common_task_fields(task, app);
-    task->code = g_strdup(code);
-    start_async_task(task);
-    return TRUE;
-}
-
 static void pair_clicked(GtkButton *button, gpointer userdata) {
     App *app = userdata;
-    AsyncTask *task = async_task_new(app, TASK_START_PAIRING);
-    copy_common_task_fields(task, app);
-    task->device_id = g_strdup(app->config->device_id);
-    set_status(app, "Запрашиваем одноразовый код pairing…");
-    start_async_task(task);
+    GtkWidget *dialog = gtk_dialog_new_with_buttons("Подключение Kindle", GTK_WINDOW(app->window), GTK_DIALOG_MODAL, "Отмена", GTK_RESPONSE_CANCEL, "Подключить", GTK_RESPONSE_ACCEPT, NULL);
+    GtkWidget *table = gtk_table_new(2, 2, FALSE);
+    GtkWidget *relay = gtk_entry_new();
+    GtkWidget *code = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(relay), app->config->relay_url);
+    gtk_entry_set_max_length(GTK_ENTRY(code), 32);
+    gtk_entry_set_activates_default(GTK_ENTRY(code), TRUE);
+    gtk_table_attach_defaults(GTK_TABLE(table), gtk_label_new("Relay URL"), 0, 1, 0, 1);
+    gtk_table_attach_defaults(GTK_TABLE(table), relay, 1, 2, 0, 1);
+    gtk_table_attach_defaults(GTK_TABLE(table), gtk_label_new("Одноразовый код"), 0, 1, 1, 2);
+    gtk_table_attach_defaults(GTK_TABLE(table), code, 1, 2, 1, 2);
+    gtk_container_set_border_width(GTK_CONTAINER(table), 12);
+    gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(dialog))), table, TRUE, TRUE, 0);
+    gtk_widget_show_all(dialog);
+    if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
+        const gchar *relay_url = gtk_entry_get_text(GTK_ENTRY(relay));
+        const gchar *pairing_code = gtk_entry_get_text(GTK_ENTRY(code));
+        if (!relay_url || !*relay_url || !pairing_code || !*pairing_code) {
+            set_status(app, "Введите Relay URL и одноразовый код");
+        } else {
+            AsyncTask *task = async_task_new(app, TASK_PAIR_CLAIM);
+            task->base_url = g_strdup(relay_url);
+            task->code = g_strdup(pairing_code);
+            set_status(app, "Подключаем Kindle…");
+            start_async_task(task);
+        }
+    }
+    gtk_widget_destroy(dialog);
 }
 
 static gboolean poll_delivery(gpointer userdata) {
@@ -365,21 +364,16 @@ static gboolean poll_delivery(gpointer userdata) {
 static void settings_clicked(GtkButton *button, gpointer userdata) {
     App *app = userdata;
     GtkWidget *dialog = gtk_dialog_new_with_buttons("Настройки", GTK_WINDOW(app->window), GTK_DIALOG_MODAL, "Отмена", GTK_RESPONSE_CANCEL, "Сохранить", GTK_RESPONSE_ACCEPT, NULL);
-    GtkWidget *table = gtk_table_new(2, 2, FALSE);
+    GtkWidget *table = gtk_table_new(1, 2, FALSE);
     GtkWidget *relay = gtk_entry_new();
-    GtkWidget *device = gtk_entry_new();
     gtk_entry_set_text(GTK_ENTRY(relay), app->config->relay_url);
-    gtk_entry_set_text(GTK_ENTRY(device), app->config->device_id);
     gtk_table_attach_defaults(GTK_TABLE(table), gtk_label_new("Relay URL"), 0, 1, 0, 1);
     gtk_table_attach_defaults(GTK_TABLE(table), relay, 1, 2, 0, 1);
-    gtk_table_attach_defaults(GTK_TABLE(table), gtk_label_new("Device ID"), 0, 1, 1, 2);
-    gtk_table_attach_defaults(GTK_TABLE(table), device, 1, 2, 1, 2);
     gtk_container_set_border_width(GTK_CONTAINER(table), 12);
     gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(dialog))), table, TRUE, TRUE, 0);
     gtk_widget_show_all(dialog);
     if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
         g_free(app->config->relay_url); app->config->relay_url = g_strdup(gtk_entry_get_text(GTK_ENTRY(relay)));
-        g_free(app->config->device_id); app->config->device_id = g_strdup(gtk_entry_get_text(GTK_ENTRY(device)));
         bookrelay_config_save(app->config, app->config_path, NULL);
         set_status(app, "Настройки сохранены");
     }
@@ -434,26 +428,15 @@ static gboolean async_task_complete(gpointer userdata) {
                 for (i = 0; i < task->categories->len; i++) gtk_combo_box_append_text(GTK_COMBO_BOX(app->categories), g_ptr_array_index(task->categories, i));
             }
             break;
-        case TASK_START_PAIRING:
-            if (!task->pairing) {
-                show_error(app, "Pairing не запущен", task->error);
+        case TASK_PAIR_CLAIM:
+            if (!task->claim || !task->claim->token || !*task->claim->token) {
+                show_error(app, "Pairing не выполнен", task->error);
             } else {
-                gchar *message;
-                g_object_set_data_full(G_OBJECT(app->window), "pairing-code", g_strdup(task->pairing->code), g_free);
-                message = g_strdup_printf("Код pairing: %s\nОткройте relay /pair на компьютере и введите этот код вместе с Kindle Email", task->pairing->code);
-                set_status(app, message);
-                g_free(message);
-                g_timeout_add_seconds(3, poll_pairing, app);
-            }
-            break;
-        case TASK_PAIR_STATUS:
-            app->pairing_poll_pending = FALSE;
-            if (task->result_token) {
-                g_free(app->config->token); app->config->token = g_strdup(task->result_token);
-                if (task->email) { g_free(app->config->kindle_email); app->config->kindle_email = g_strdup(task->email); }
+                g_free(app->config->relay_url); app->config->relay_url = g_strdup(task->base_url);
+                g_free(app->config->token); app->config->token = g_strdup(task->claim->token);
+                g_free(app->config->kindle_email); app->config->kindle_email = g_strdup(task->claim->kindle_email ? task->claim->kindle_email : "");
                 bookrelay_config_save(app->config, app->config_path, NULL);
                 set_status(app, "Kindle привязан");
-                g_object_set_data(G_OBJECT(app->window), "pairing-code", NULL);
             }
             break;
         case TASK_SEND:

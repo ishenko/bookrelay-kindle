@@ -16,9 +16,10 @@ The client is packaged as a KPM-style user-storage application. It does not modi
 
 1. Run the relay on your own VPS with Docker Compose.
 2. Add the relay SMTP sender to Amazon's Approved Personal Document E-mail List.
-3. Enter the relay URL on Kindle and start pairing.
-4. Open the relay pairing page on a computer, enter the one-time code and the Kindle's Send to Kindle address.
-5. Search books on Kindle and choose Send to Kindle.
+3. Set the Kindle's Send to Kindle address in BOOKRELAY_DEFAULT_KINDLE_EMAIL on the VPS.
+4. Open the relay pairing page on a computer, enter the owner key, and copy the one-time code.
+5. Enter the relay URL and one-time code in the Kindle client.
+6. Search books on Kindle and choose Send to Kindle.
 
 The relay stores only job metadata and temporary delivery data needed to send the EPUB. It does not bypass DRM, CAPTCHA, or source authentication.
 
@@ -29,7 +30,7 @@ Copy the example environment file, set SMTP credentials, and start the service:
     cp .env.example .env
     docker compose up -d --build
 
-Set BOOKRELAY_PAIRING_ADMIN_KEY to a long random secret; pairing is disabled when it is empty. Keep BOOKRELAY_DELIVERY_ENABLED=false until SMTP is configured. Enter the owner key only on the HTTPS pairing page.
+Set BOOKRELAY_PAIRING_ADMIN_KEY to a long random secret and BOOKRELAY_DEFAULT_KINDLE_EMAIL to the device address; pairing is disabled when either value is empty. Keep BOOKRELAY_DELIVERY_ENABLED=false until SMTP is configured. Enter the owner key only on the HTTPS pairing page. SMTP credentials and the Kindle Email never go into the Kindle client.
 
 The relay listens on port 8000 by default. Put it behind HTTPS before using it from a Kindle. A reverse proxy such as Caddy or nginx should terminate TLS and limit access to the pairing page and API as appropriate.
 

@@ -6,6 +6,13 @@ This guide assumes a jailbroken Kindle Paperwhite 11 or 12 running firmware 5.19
 
 Create a dedicated SMTP sender address for the relay. Add that address to Amazon's Approved Personal Document E-mail List. Find the Kindle's Send to Kindle e-mail address in the Amazon device settings and use that address during pairing.
 
+Set the following values in Dokploy before pairing:
+
+    BOOKRELAY_PAIRING_ADMIN_KEY=<long random owner key>
+    BOOKRELAY_DEFAULT_KINDLE_EMAIL=<your Kindle Send to Kindle address>
+    BOOKRELAY_SMTP_*=<SMTP settings>
+    BOOKRELAY_DELIVERY_ENABLED=true
+
 The relay sends EPUB as an email attachment. Amazon's processing and delivery time is outside the application's control; the client reports that the relay accepted or sent the job.
 
 ## Install
@@ -38,10 +45,11 @@ repository manifest to index and install it.
 After installation:
 
 1. Launch BookRelay Kindle from the installed application entry.
-2. Open Settings, enter the HTTPS relay URL, and save.
-3. Press Pairing and complete the one-time code form at the relay's /pair page.
+2. On a computer, open https://your-relay.example/pair, enter the Dokploy owner key, and copy the generated one-time code.
+3. Press Pairing on Kindle, enter the HTTPS relay URL and the code, then press Connect.
+4. Search for a book and choose Send to Kindle.
 
-The client stores its configuration below user storage. The token can be revoked from the relay API by calling the revoke action with the token, or by deleting the device record from the relay database during maintenance.
+The client stores its relay URL, the Kindle Email returned by the relay, and a revocable token below user storage. The one-time code is not stored. The token can be revoked from the relay API by calling the revoke action with the token, or by deleting the device record from the relay database during maintenance.
 
 ## Removal
 

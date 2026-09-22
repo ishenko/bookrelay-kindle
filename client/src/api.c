@@ -219,34 +219,20 @@ BookRelayBook *bookrelay_api_book(const gchar *base_url, const gchar *token, con
     return book;
 }
 
-BookRelayPairing *bookrelay_api_start_pairing(const gchar *base_url, const gchar *device_id, GError **error) {
-    gchar *url = join_url(base_url, "/v1/pair/start");
-    gchar *escaped_device_id = json_escape(device_id);
-    gchar *body = g_strdup_printf("{\"device_id\":\"%s\"}", escaped_device_id);
+BookRelayClaim *bookrelay_api_pair_claim(const gchar *base_url, const gchar *code, GError **error) {
+    gchar *url = join_url(base_url, "/v1/pair/claim");
+    gchar *escaped_code = json_escape(code);
+    gchar *body = g_strdup_printf("{\"code\":\"%s\"}", escaped_code);
     long status;
     gchar *response = request("POST", url, NULL, body, &status, error);
-    BookRelayPairing *pairing = NULL;
+    BookRelayClaim *claim = NULL;
     if (response) {
-        pairing = g_new0(BookRelayPairing, 1);
-        pairing->code = json_string(response, "code");
-        pairing->expires_at = json_string(response, "expires_at");
+        claim = g_new0(BookRelayClaim, 1);
+        claim->token = json_string(response, "token");
+        claim->kindle_email = json_string(response, "kindle_email");
     }
-    g_free(url); g_free(escaped_device_id); g_free(body); g_free(response);
-    return pairing;
-}
-
-gchar *bookrelay_api_pair_status(const gchar *base_url, const gchar *code, gchar **kindle_email, GError **error) {
-    gchar *url = g_strdup_printf("%s/v1/pair/status/%s", base_url, code);
-    long status;
-    gchar *body = request("GET", url, NULL, NULL, &status, error);
-    gchar *token = NULL;
-    if (kindle_email) *kindle_email = NULL;
-    if (body && strstr(body, "\"status\":\"claimed\"")) {
-        token = json_string(body, "token");
-        if (kindle_email) *kindle_email = json_string(body, "kindle_email");
-    }
-    g_free(url); g_free(body);
-    return token;
+    g_free(url); g_free(escaped_code); g_free(body); g_free(response);
+    return claim;
 }
 
 gchar *bookrelay_api_send(const gchar *base_url, const gchar *token, const gchar *book_id, const gchar *title, GError **error) {
@@ -296,7 +282,7 @@ BookRelayBook *bookrelay_book_copy(const BookRelayBook *book) {
     return copy;
 }
 
-void bookrelay_pairing_free(BookRelayPairing *pairing) {
-    if (!pairing) return;
-    g_free(pairing->code); g_free(pairing->expires_at); g_free(pairing);
+void bookrelay_claim_free(BookRelayClaim *claim) {
+    if (!claim) return;
+    g_free(claim->token); g_free(claim->kindle_email); g_free(claim);
 }

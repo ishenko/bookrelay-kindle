@@ -95,7 +95,6 @@ class PairingStore:
                 "status": "claimed",
                 "device_id": row["device_id"],
                 "kindle_email": row["kindle_email"],
-                "token": row["token"],
             }
         return {"status": "pending", "expires_at": row["expires_at"]}
 

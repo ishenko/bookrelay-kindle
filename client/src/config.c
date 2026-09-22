@@ -8,7 +8,6 @@ BookRelayConfig *bookrelay_config_load(const gchar *path) {
     GError *error = NULL;
 
     config->relay_url = g_strdup("https://relay.example.invalid");
-    config->device_id = g_strdup("kindle");
     config->kindle_email = g_strdup("");
     config->token = g_strdup("");
     config->auto_download = FALSE;
@@ -16,8 +15,6 @@ BookRelayConfig *bookrelay_config_load(const gchar *path) {
     if (g_key_file_load_from_file(key_file, path, G_KEY_FILE_NONE, &error)) {
         gchar *value = g_key_file_get_string(key_file, "relay", "url", NULL);
         if (value) { g_free(config->relay_url); config->relay_url = value; }
-        value = g_key_file_get_string(key_file, "device", "id", NULL);
-        if (value) { g_free(config->device_id); config->device_id = value; }
         value = g_key_file_get_string(key_file, "device", "kindle_email", NULL);
         if (value) { g_free(config->kindle_email); config->kindle_email = value; }
         value = g_key_file_get_string(key_file, "device", "token", NULL);
@@ -39,7 +36,6 @@ gboolean bookrelay_config_save(const BookRelayConfig *config, const gchar *path,
     g_mkdir_with_parents(directory, 0700);
     g_free(directory);
     g_key_file_set_string(key_file, "relay", "url", config->relay_url);
-    g_key_file_set_string(key_file, "device", "id", config->device_id);
     g_key_file_set_string(key_file, "device", "kindle_email", config->kindle_email);
     g_key_file_set_string(key_file, "device", "token", config->token);
     g_key_file_set_boolean(key_file, "device", "auto_download", config->auto_download);
@@ -53,7 +49,6 @@ gboolean bookrelay_config_save(const BookRelayConfig *config, const gchar *path,
 void bookrelay_config_free(BookRelayConfig *config) {
     if (!config) return;
     g_free(config->relay_url);
-    g_free(config->device_id);
     g_free(config->kindle_email);
     g_free(config->token);
     g_free(config);

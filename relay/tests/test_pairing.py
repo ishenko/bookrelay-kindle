@@ -7,7 +7,7 @@ from bookrelay.pairing import PairingStore
 
 
 class PairingStoreTests(unittest.TestCase):
-    def test_code_is_claimed_once_and_status_returns_token(self):
+    def test_code_is_claimed_once_and_status_does_not_return_token(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = PairingStore(Path(tmp) / "pairing.sqlite3")
             pairing = store.start_pairing(device_id="device-1", ttl=timedelta(minutes=5))
@@ -16,7 +16,9 @@ class PairingStoreTests(unittest.TestCase):
             claim = store.claim(pairing.code, "reader@example.com")
             self.assertEqual(claim["kindle_email"], "reader@example.com")
             self.assertTrue(claim["token"])
-            self.assertEqual(store.status(pairing.code)["status"], "claimed")
+            status = store.status(pairing.code)
+            self.assertEqual(status["status"], "claimed")
+            self.assertNotIn("token", status)
             with self.assertRaises(ValueError):
                 store.claim(pairing.code, "other@example.com")
 

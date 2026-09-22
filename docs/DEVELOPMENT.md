@@ -35,8 +35,18 @@ Do not copy a host Linux binary into a Kindle package. The package manifest decl
 ## Release checks
 
     python scripts/check-kpm.py
+    python scripts/test_check_kpm_repository.py
+    python scripts/check-kpm-repository.py --release-tag v0.1.0
     python scripts/package-kpm.py --binary client/build/bookrelay-kindle --output dist/bookrelay-kindle.kpkg
     tar -tzf dist/bookrelay-kindle.kpkg
     git diff --check
+
+Pushing a vMAJOR.MINOR.PATCH tag runs .github/workflows/release.yml. The
+workflow performs the real kindlehf cross-build, packages the KPM archive and
+publishes the archive plus its SHA-256 checksum as a GitHub Release asset.
+
+The repository manifest in kpm/manifest.json is intentionally KPM repository
+format version 2. The package manifest in packaging/kpm/manifest.json is the
+KPM package format used by the installed client and remains version 3.
 
 Before testing on hardware, verify the install and uninstall hooks in a disposable user-storage directory. On hardware, check launch, search, pairing, cover failure, delivery acceptance and uninstall. Do not test by modifying rootfs or remounting system partitions.

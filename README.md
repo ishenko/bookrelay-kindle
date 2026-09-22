@@ -37,7 +37,25 @@ SQLite is the default database. The container stores it in the relay-data volume
 
 ## Kindle installation
 
-Build the client with the Kindle SDK and its kindlehf cross file:
+The simplest installation uses the official KPM repository. On the Kindle, run:
+
+    kpm add-repo https://raw.githubusercontent.com/ishenko/bookrelay-kindle/main/kpm/manifest.json
+    kpm update
+    kpm install bookrelay-kindle
+
+After a new GitHub Release, update the installed package with:
+
+    kpm install bookrelay-kindle
+
+To prepare the package offline, copy the whole bookrelay-kpm folder from the
+release files to the Kindle USB root. It must contain manifest.json and
+packages/bookrelay-kindle_0.1.0_kindlehf.kpkg. Then run:
+
+    kpm add-repo file:///mnt/us/bookrelay-kpm/manifest.json
+    kpm update
+    kpm install bookrelay-kindle
+
+For maintainers, build the client with the Kindle SDK and its kindlehf cross file:
 
     meson setup client/build client --cross-file /path/to/kindlehf.ini
     meson compile -C client/build

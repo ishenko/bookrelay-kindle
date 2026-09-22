@@ -69,5 +69,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: python scripts/check-kpm.py
+      - run: python scripts/test_check_kpm_repository.py
+      - run: python scripts/check-kpm-repository.py
       - run: python -m json.tool packaging/kpm/manifest.json >/dev/null
+      - run: python -m json.tool kpm/manifest.json >/dev/null
       - run: git diff --check

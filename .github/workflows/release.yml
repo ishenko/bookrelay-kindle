@@ -1,0 +1,63 @@
+name: Release Kindle package
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  kindlehf-release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: KindleModding/kindle-sdk
+          submodules: recursive
+          path: kindle-sdk
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y aria2 libarchive-dev meson ninja-build pkg-config python3 zlib1g-dev nettle-dev
+
+      - name: Install kindlehf toolchain
+        run: |
+          wget -q https://github.com/KindleModding/koxtoolchain/releases/latest/download/kindlehf.tar.gz -O /tmp/kindlehf.tar.gz
+          tar -xzf /tmp/kindlehf.tar.gz -C "$HOME"
+
+      - name: Generate Kindle SDK sysroot
+        run: sudo bash kindle-sdk/gen-sdk.sh kindlehf
+
+      - name: Build kindlehf client
+        run: |
+          meson setup client/build-kindlehf client --cross-file "$HOME/x-tools/arm-kindlehf-linux-gnueabihf/meson-crosscompile.txt"
+          meson compile -C client/build-kindlehf
+          file client/build-kindlehf/bookrelay-kindle
+          readelf -h client/build-kindlehf/bookrelay-kindle | sed -n '1,24p'
+          readelf -d client/build-kindlehf/bookrelay-kindle | grep -E 'NEEDED|INTERP'
+
+      - name: Validate and package
+        run: |
+          python3 scripts/check-kpm.py
+          python3 scripts/check-kpm-repository.py --release-tag "$GITHUB_REF_NAME"
+          python3 scripts/package-kpm.py \
+            --binary client/build-kindlehf/bookrelay-kindle \
+            --output dist/bookrelay-kindle-kindlehf.kpkg
+          tar -tzf dist/bookrelay-kindle-kindlehf.kpkg
+          sha256sum dist/bookrelay-kindle-kindlehf.kpkg > dist/bookrelay-kindle-kindlehf.kpkg.sha256
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "BookRelay Kindle $GITHUB_REF_NAME" \
+            --generate-notes \
+            dist/bookrelay-kindle-kindlehf.kpkg \
+            dist/bookrelay-kindle-kindlehf.kpkg.sha256

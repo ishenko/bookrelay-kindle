@@ -10,13 +10,36 @@ The relay sends EPUB as an email attachment. Amazon's processing and delivery ti
 
 ## Install
 
-1. Build the client with the Kindle SDK.
-2. Build the KPM archive with scripts/package-kpm.py.
-3. Copy the archive to user storage.
-4. Install it with the KPM package manager in the jailbreak environment.
-5. Launch BookRelay Kindle from the installed application entry.
-6. Open Settings, enter the HTTPS relay URL, and save.
-7. Press Pairing and complete the one-time code form at the relay's /pair page.
+### Online installation from GitHub
+
+Run these commands in the Kindle terminal or KPM shell:
+
+    kpm add-repo https://raw.githubusercontent.com/ishenko/bookrelay-kindle/main/kpm/manifest.json
+    kpm update
+    kpm install bookrelay-kindle
+
+For a later version, run kpm install bookrelay-kindle again. KPM selects the
+kindlehf package for Paperwhite 11 and 12.
+
+### Offline USB installation
+
+Copy the complete bookrelay-kpm folder to the Kindle USB root. The expected
+paths are /mnt/us/bookrelay-kpm/manifest.json and
+/mnt/us/bookrelay-kpm/packages/bookrelay-kindle_0.1.0_kindlehf.kpkg.
+Then run:
+
+    kpm add-repo file:///mnt/us/bookrelay-kpm/manifest.json
+    kpm update
+    kpm install bookrelay-kindle
+
+Do not copy the .kpkg directly to /mnt/us/kmc/kpm/packages/; KPM needs the
+repository manifest to index and install it.
+
+After installation:
+
+1. Launch BookRelay Kindle from the installed application entry.
+2. Open Settings, enter the HTTPS relay URL, and save.
+3. Press Pairing and complete the one-time code form at the relay's /pair page.
 
 The client stores its configuration below user storage. The token can be revoked from the relay API by calling the revoke action with the token, or by deleting the device record from the relay database during maintenance.
 

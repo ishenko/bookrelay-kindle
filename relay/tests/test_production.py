@@ -26,11 +26,11 @@ class ProductionTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as tmp:
             mailer = FakeMailer()
             app = create_app(Path(tmp) / "relay.db", source=FakeSource(), mailer=mailer,
-                             pairing_admin_key="owner-test-secret", default_kindle_email="reader@kindle.com", delivery_enabled=False)
+                             pairing_admin_key="owner-test-secret", delivery_enabled=False)
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://test") as c:
-                denied = await c.post("/v1/pair/start", json={"device_id": "test", "admin_key": "wrong"})
+                denied = await c.post("/v1/pair/start", json={"device_id": "test", "kindle_email": "reader@kindle.com", "admin_key": "wrong"})
                 self.assertEqual(denied.status_code, 403)
-                code_response = await c.post("/v1/pair/start", json={"device_id": "test", "admin_key": "owner-test-secret"})
+                code_response = await c.post("/v1/pair/start", json={"device_id": "test", "kindle_email": "reader@kindle.com", "admin_key": "owner-test-secret"})
                 self.assertEqual(code_response.status_code, 200)
                 code = code_response.json()["code"]
                 token = (await c.post("/v1/pair/claim", json={"code": code})).json()["token"]
@@ -43,14 +43,14 @@ class ProductionTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as tmp:
             app = create_app(Path(tmp) / "relay.db", source=FakeSource(), mailer=FakeMailer(), pairing_admin_key="")
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://test") as c:
-                r = await c.post("/v1/pair/start", json={"device_id": "test", "admin_key": "owner"})
+                r = await c.post("/v1/pair/start", json={"device_id": "test", "kindle_email": "reader@kindle.com", "admin_key": "owner"})
                 self.assertEqual(r.status_code, 503)
 
     async def test_claimed_code_does_not_expose_token_after_expiry(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = PairingStore(Path(tmp) / "relay.db")
-            code = store.start_pairing("test").code
-            store.claim(code, "r@kindle.com")
+            code = store.start_pairing("test", "r@kindle.com").code
+            store.claim(code)
             with store._connect() as conn:
                 conn.execute("UPDATE pairings SET expires_at = ? WHERE code = ?", ((utc_now() - timedelta(seconds=1)).isoformat(), code))
             self.assertEqual(store.status(code), {"status": "expired"})

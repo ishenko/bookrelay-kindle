@@ -49,19 +49,19 @@ class PairingStore:
         conn.row_factory = sqlite3.Row
         return conn
 
-    def start_pairing(self, device_id: str, ttl: timedelta = timedelta(minutes=10)) -> Pairing:
+    def start_pairing(self, device_id: str, kindle_email: str, ttl: timedelta = timedelta(minutes=10)) -> Pairing:
+        if not EMAIL_RE.match(kindle_email):
+            raise ValueError("invalid Kindle Email")
         code = secrets.token_hex(4).upper()
         expires_at = utc_now() + ttl
         with self._connect() as conn:
             conn.execute(
-                "INSERT INTO pairings(code, device_id, expires_at) VALUES (?, ?, ?)",
-                (code, device_id, expires_at.isoformat()),
+                "INSERT INTO pairings(code, device_id, expires_at, kindle_email) VALUES (?, ?, ?, ?)",
+                (code, device_id, expires_at.isoformat(), kindle_email),
             )
-        return Pairing(code=code, device_id=device_id, expires_at=expires_at.isoformat())
+        return Pairing(code=code, device_id=device_id, expires_at=expires_at.isoformat(), kindle_email=kindle_email)
 
-    def claim(self, code: str, kindle_email: str):
-        if not EMAIL_RE.match(kindle_email):
-            raise ValueError("invalid Kindle Email")
+    def claim(self, code: str):
         now = utc_now()
         token = secrets.token_urlsafe(32)
         with self._connect() as conn:
@@ -73,15 +73,17 @@ class PairingStore:
                 raise ValueError("pairing code already claimed")
             if datetime.fromisoformat(row["expires_at"]) <= now:
                 raise ValueError("pairing code expired")
+            if not row["kindle_email"] or not EMAIL_RE.match(row["kindle_email"]):
+                raise ValueError("pairing code has no valid Kindle Email")
             conn.execute(
-                "UPDATE pairings SET claimed_at = ?, kindle_email = ?, token = ? WHERE code = ?",
-                (now.isoformat(), kindle_email, token, code.upper()),
+                "UPDATE pairings SET claimed_at = ?, token = ? WHERE code = ?",
+                (now.isoformat(), token, code.upper()),
             )
             conn.execute(
                 "INSERT OR REPLACE INTO devices(token_hash, device_id, kindle_email, created_at) VALUES (?, ?, ?, ?)",
-                (hash_token(token), row["device_id"], kindle_email, now.isoformat()),
+                (hash_token(token), row["device_id"], row["kindle_email"], now.isoformat()),
             )
-        return {"device_id": row["device_id"], "kindle_email": kindle_email, "token": token}
+        return {"device_id": row["device_id"], "kindle_email": row["kindle_email"], "token": token}
 
     def status(self, code: str):
         with self._connect() as conn:

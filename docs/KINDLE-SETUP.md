@@ -4,12 +4,11 @@ This guide assumes a jailbroken Kindle Paperwhite 11 or 12 running firmware 5.19
 
 ## Amazon setup
 
-Create a dedicated SMTP sender address for the relay. Add that address to Amazon's Approved Personal Document E-mail List. Find the Kindle's Send to Kindle e-mail address in the Amazon device settings and use that address during pairing.
+Create a dedicated SMTP sender address for the relay. Add that address to Amazon's Approved Personal Document E-mail List. Find each Kindle's Send to Kindle e-mail address in the Amazon device settings.
 
 Set the following values in Dokploy before pairing:
 
     BOOKRELAY_PAIRING_ADMIN_KEY=<long random owner key>
-    BOOKRELAY_DEFAULT_KINDLE_EMAIL=<your Kindle Send to Kindle address>
     BOOKRELAY_SMTP_*=<SMTP settings>
     BOOKRELAY_DELIVERY_ENABLED=true
 
@@ -42,7 +41,7 @@ kindlehf package for Paperwhite 11 and 12.
 
 Copy the complete bookrelay-kpm folder to the Kindle USB root. The expected
 paths are /mnt/us/bookrelay-kpm/manifest.json and
-/mnt/us/bookrelay-kpm/packages/bookrelay-kindle_0.1.3_kindlehf.kpkg.
+/mnt/us/bookrelay-kpm/packages/bookrelay-kindle_0.1.4_kindlehf.kpkg.
 Then run:
 
     kpm add-repo file:///mnt/us/bookrelay-kpm/manifest.json
@@ -55,7 +54,7 @@ repository manifest to index and install it.
 After installation:
 
 1. Launch BookRelay Kindle from the installed application entry.
-2. On a computer, open https://your-relay.example/pair, enter the Dokploy owner key, and copy the generated one-time code.
+2. On a computer, open https://your-relay.example/pair, enter the Kindle Email for this device and the Dokploy owner key, and copy the generated one-time code. Repeat with a new code for every Kindle.
 3. Press Pairing on Kindle, enter the HTTPS relay URL and the code, then press Connect.
 4. Search for a book and choose Send to Kindle.
 

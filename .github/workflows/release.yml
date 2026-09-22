@@ -49,7 +49,7 @@ jobs:
             --binary client/build-kindlehf/bookrelay-kindle \
             --output dist/bookrelay-kindle-kindlehf.kpkg
           tar -tzf dist/bookrelay-kindle-kindlehf.kpkg
-          sha256sum dist/bookrelay-kindle-kindlehf.kpkg > dist/bookrelay-kindle-kindlehf.kpkg.sha256
+          (cd dist && sha256sum bookrelay-kindle-kindlehf.kpkg > bookrelay-kindle-kindlehf.kpkg.sha256)
 
       - name: Publish GitHub Release
         env:

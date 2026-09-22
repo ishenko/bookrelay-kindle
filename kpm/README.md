@@ -1,11 +1,12 @@
 # BookRelay KPM repository
 
-Add this repository once on a jailbroken Kindle with KPM:
+Add this repository once on a jailbroken Kindle with KPM. From the Kindle home
+screen global search field, prefix each command with a semicolon:
 
 ~~~sh
-kpm add-repo https://book.fffq.uk/i
-kpm update
-kpm install bookrelay-kindle
+;kpm add-repo https://book.fffq.uk/i
+;kpm update
+;kpm install bookrelay-kindle
 ~~~
 
 To install a later release, run:

@@ -19,11 +19,15 @@ The relay sends EPUB as an email attachment. Amazon's processing and delivery ti
 
 ### Online installation from GitHub
 
-Run these commands in the Kindle terminal or KPM shell:
+On the Kindle home screen, open the global search field and enter each command
+with a leading semicolon. The semicolon tells the jailbroken Kindle to execute
+the KPM command instead of searching the library:
 
-    kpm add-repo https://book.fffq.uk/i
-    kpm update
-    kpm install bookrelay-kindle
+    ;kpm add-repo https://book.fffq.uk/i
+    ;kpm update
+    ;kpm install bookrelay-kindle
+
+If you are using KTerm, enter the same commands without the leading semicolon.
 
 For a later version, run kpm install bookrelay-kindle again. KPM selects the
 kindlehf package for Paperwhite 11 and 12.

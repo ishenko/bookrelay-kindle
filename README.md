@@ -38,11 +38,12 @@ SQLite is the default database. The container stores it in the relay-data volume
 
 ## Kindle installation
 
-The simplest installation uses the official KPM repository. On the Kindle, run:
+The simplest installation uses the official KPM repository. On the Kindle home screen,
+open the global search field and run each command with a leading semicolon:
 
-    kpm add-repo https://book.fffq.uk/i
-    kpm update
-    kpm install bookrelay-kindle
+    ;kpm add-repo https://book.fffq.uk/i
+    ;kpm update
+    ;kpm install bookrelay-kindle
 
 After a new GitHub Release, update the installed package with:
 

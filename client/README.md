@@ -4,6 +4,8 @@ The client is a small GTK application intended for the kindlehf target used by K
 
 It stores configuration in the user data directory and communicates only with the configured relay. It does not write Kindle system files, alter OTA settings, or place books into the Kindle database. Amazon delivery puts the EPUB into the normal Kindle library.
 
+The toolbar has an explicit `Выйти` action. It asks for confirmation and then leaves the GTK application; closing the window uses the same safe system path.
+
 Build with the Kindle SDK toolchain and Meson. The exact cross file is supplied by the Kindle SDK:
 
     meson setup build --cross-file /path/to/kindlehf.ini

@@ -275,12 +275,27 @@ static void settings_clicked(GtkButton *button, gpointer userdata) {
     gtk_widget_destroy(dialog);
 }
 
+static void exit_clicked(GtkButton *button, gpointer userdata) {
+    App *app = userdata;
+    GtkWidget *dialog = gtk_message_dialog_new(GTK_WINDOW(app->window), GTK_DIALOG_MODAL, GTK_MESSAGE_QUESTION, GTK_BUTTONS_NONE, "Выйти из BookRelay Kindle?");
+    gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(dialog), "Все настройки и pairing останутся сохранены.");
+    gtk_dialog_add_buttons(GTK_DIALOG(dialog), "Отмена", GTK_RESPONSE_CANCEL, "Выйти", GTK_RESPONSE_ACCEPT, NULL);
+    gtk_widget_show_all(dialog);
+    if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
+        gtk_widget_destroy(dialog);
+        gtk_main_quit();
+        return;
+    }
+    gtk_widget_destroy(dialog);
+}
+
 static void build_ui(App *app) {
     GtkWidget *root = gtk_vbox_new(FALSE, 8);
     GtkWidget *toolbar = gtk_hbox_new(FALSE, 6);
     GtkWidget *search_button = gtk_button_new_with_label("Искать");
     GtkWidget *pair_button = gtk_button_new_with_label("Pairing");
     GtkWidget *settings_button = gtk_button_new_with_label("Настройки");
+    GtkWidget *exit_button = gtk_button_new_with_label("Выйти");
     GtkWidget *navigation = gtk_hbox_new(FALSE, 6);
     GtkWidget *previous_page = gtk_button_new_with_label("Назад");
     GtkWidget *next_page = gtk_button_new_with_label("Дальше");
@@ -303,6 +318,7 @@ static void build_ui(App *app) {
     gtk_box_pack_start(GTK_BOX(toolbar), search_button, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), pair_button, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), settings_button, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(toolbar), exit_button, FALSE, FALSE, 0);
     gtk_container_add(GTK_CONTAINER(scroll), app->results);
     gtk_box_pack_start(GTK_BOX(root), toolbar, FALSE, FALSE, 8);
     gtk_box_pack_start(GTK_BOX(root), scroll, TRUE, TRUE, 0);
@@ -314,6 +330,7 @@ static void build_ui(App *app) {
     g_signal_connect(search_button, "clicked", G_CALLBACK(search_clicked), app);
     g_signal_connect(pair_button, "clicked", G_CALLBACK(pair_clicked), app);
     g_signal_connect(settings_button, "clicked", G_CALLBACK(settings_clicked), app);
+    g_signal_connect(exit_button, "clicked", G_CALLBACK(exit_clicked), app);
     g_signal_connect(previous_page, "clicked", G_CALLBACK(previous_page_clicked), app);
     g_signal_connect(next_page, "clicked", G_CALLBACK(next_page_clicked), app);
     gtk_widget_set_sensitive(previous_page, FALSE);

@@ -14,6 +14,20 @@ class KindleUiContractTests(unittest.TestCase):
         self.assertIn('gtk_button_new_with_label("Назад")', source)
         self.assertIn('gtk_button_new_with_label("Дальше")', source)
 
+    def test_native_ui_has_confirmed_exit_action(self):
+        source = Path(__file__).parents[1].joinpath("src", "main.c").read_text()
+        self.assertIn('gtk_button_new_with_label("Выйти")', source)
+        self.assertIn("exit_clicked", source)
+        self.assertIn("gtk_main_quit", source)
+
+    def test_browser_preview_has_exit_action(self):
+        root = Path(__file__).parents[2]
+        index = root.joinpath("preview", "index.html").read_text()
+        app = root.joinpath("preview", "app.js").read_text()
+        self.assertIn('id="exit-button"', index)
+        self.assertIn("openExitConfirmation", app)
+        self.assertIn("Приложение закрыто", app)
+
 
 if __name__ == "__main__":
     unittest.main()

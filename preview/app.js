@@ -98,6 +98,18 @@ function openSettings() {
   $('.save-settings')?.addEventListener('click', () => { state.email = $('#kindle-email').value || 'reader@example.com'; state.autoDownload = $('#auto-download').checked; closeModal(); setStatus('Настройки сохранены'); if (state.paired) $('#connection-status').textContent = 'Kindle: ' + state.email; });
 }
 
+function openExitConfirmation() {
+  openModal('<div class="modal-header"><div><p class="eyebrow">ЗАВЕРШЕНИЕ РАБОТЫ</p><h2>Выйти из BookRelay Kindle?</h2><p class="modal-subtitle">Настройки и pairing останутся сохранены.</p></div><button class="close-button" type="button" aria-label="Закрыть">×</button></div><p class="helper">В native-клиенте Kindle это закроет приложение. В browser preview будет показан экран закрытия.</p><div class="modal-actions"><button class="outline-button close-action" type="button">Отмена</button><button class="ink-button confirm-exit" type="button">Выйти</button></div>');
+  $('.close-action')?.addEventListener('click', closeModal);
+  $('.confirm-exit')?.addEventListener('click', showPreviewClosed);
+}
+
+function showPreviewClosed() {
+  const root = $('#modal-root');
+  root.innerHTML = '<div class="modal exit-modal" role="dialog" aria-modal="true"><div class="exit-screen"><p class="eyebrow">BOOKRELAY KINDLE</p><h2>Приложение закрыто</h2><p class="helper">Это безопасный экран preview. На Kindle после выхода управление вернётся в систему.</p><button class="ink-button reopen-preview" type="button">Вернуться в preview</button></div></div>';
+  root.querySelector('.reopen-preview')?.addEventListener('click', () => { closeModal(); setStatus('Превью снова запущено'); });
+}
+
 $('#search-form').addEventListener('submit', (event) => { event.preventDefault(); state.query = $('#search-input').value; state.page = 1; render(); setStatus(state.query ? 'Поиск завершён · ' + filteredBooks().length + ' результатов' : 'Показаны рекомендации'); });
 $('#search-input').addEventListener('search', () => { state.query = $('#search-input').value; state.page = 1; render(); });
 document.querySelectorAll('.category').forEach((button) => button.addEventListener('click', () => { state.category = button.dataset.category; state.page = 1; document.querySelectorAll('.category').forEach((item) => item.classList.toggle('active', item === button)); render(); setStatus('Категория: ' + button.textContent); }));
@@ -105,5 +117,6 @@ $('#previous-page').addEventListener('click', () => { if (state.page > 1) { stat
 $('#next-page').addEventListener('click', () => { const pages = Math.max(1, Math.ceil(filteredBooks().length / state.pageSize)); if (state.page < pages) { state.page += 1; render(); setStatus('Открыта страница ' + state.page); } });
 $('#pair-button').addEventListener('click', openPairing);
 $('#settings-button').addEventListener('click', openSettings);
+$('#exit-button').addEventListener('click', openExitConfirmation);
 document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeModal(); });
 render();

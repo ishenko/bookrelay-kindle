@@ -98,6 +98,9 @@ h3 { margin-bottom: 7px; font-size: 20px; line-height: 1.08; font-weight: 600; }
 .pairing-code small { color: #66766d; font-size: 12px; }
 .helper { color: var(--muted); font-size: 14px; line-height: 1.45; }
 .delivery-state { margin: 14px 0 0; padding: 11px 13px; border-radius: 7px; background: #eef4ef; color: #3e5e4b; font-size: 14px; }
+.exit-screen { padding: 32px 10px 16px; text-align: center; }
+.exit-screen h2 { margin-bottom: 12px; }
+.exit-screen .helper { max-width: 390px; margin: 0 auto 24px; }
 @media (max-width: 760px) {
   .stage { padding: 0; }
   .device { min-height: 100vh; border-radius: 0; padding: 0 20px 22px; }

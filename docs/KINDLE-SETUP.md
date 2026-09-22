@@ -21,7 +21,7 @@ The relay sends EPUB as an email attachment. Amazon's processing and delivery ti
 
 Run these commands in the Kindle terminal or KPM shell:
 
-    kpm add-repo https://raw.githubusercontent.com/ishenko/bookrelay-kindle/main/kpm/manifest.json
+    kpm add-repo https://book.fffq.uk/i
     kpm update
     kpm install bookrelay-kindle
 

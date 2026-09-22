@@ -11,6 +11,17 @@ from test_api import FakeMailer, FakeSource
 
 
 class ProductionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_short_install_url_serves_kpm_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app = create_app(Path(tmp) / "relay.db", source=FakeSource(), mailer=FakeMailer())
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://test") as c:
+                response = await c.get("/i")
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.headers["content-type"], "application/json")
+                manifest = response.json()
+                self.assertEqual(manifest["id"], "bookrelay-kindle")
+                self.assertEqual(manifest["manifest_version"], 2)
+
     async def test_owner_key_and_delivery_switch(self):
         with tempfile.TemporaryDirectory() as tmp:
             mailer = FakeMailer()

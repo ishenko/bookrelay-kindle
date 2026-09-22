@@ -1,3 +1,4 @@
+import json
 import os
 import secrets
 from pathlib import Path
@@ -6,7 +7,7 @@ from collections import defaultdict, deque
 from time import monotonic
 
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from .delivery import SmtpMailer
@@ -41,6 +42,7 @@ PAIRING_PAGE = """<!doctype html>
 <form id='pair'><label>Owner key (Dokploy Environment)<input name='admin_key' type='password' required autocomplete='off'></label><button>Generate pairing code</button></form><section id='result' hidden><p>Enter this code on the Kindle:</p><strong id='code'></strong><p id='expires'></p></section>
 <script>document.querySelector('#pair').addEventListener('submit',async e=>{e.preventDefault();const result=document.querySelector('#result');const body={device_id:'web-'+(crypto.randomUUID?crypto.randomUUID():Date.now()),admin_key:new FormData(e.target).get('admin_key')};const r=await fetch('/v1/pair/start',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});const data=await r.json();result.hidden=false;if(!r.ok){result.textContent=data.detail||'Pairing failed';return;}result.querySelector('#code').textContent=data.code;result.querySelector('#expires').textContent='Code expires at '+data.expires_at;});</script>
 </html>"""
+KPM_MANIFEST_PATH = Path(__file__).resolve().parents[2] / "kpm" / "manifest.json"
 
 
 def _token(authorization: str | None):
@@ -109,6 +111,14 @@ def create_app(db_path: Path | str | None = None, source=None, mailer=None, pair
     @app.get("/pair", response_class=HTMLResponse)
     def pairing_page():
         return PAIRING_PAGE
+
+    @app.get("/i", include_in_schema=False)
+    def install_manifest():
+        try:
+            manifest = json.loads(KPM_MANIFEST_PATH.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise HTTPException(status_code=503, detail="KPM manifest is unavailable") from exc
+        return JSONResponse(content=manifest, headers={"Cache-Control": "public, max-age=300"})
 
     @app.get("/v1/categories")
     def categories(request: Request, authorization: str | None = Header(default=None)):

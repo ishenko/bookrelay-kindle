@@ -3,7 +3,7 @@
 Add this repository once on a jailbroken Kindle with KPM:
 
 ~~~sh
-kpm add-repo https://raw.githubusercontent.com/ishenko/bookrelay-kindle/main/kpm/manifest.json
+kpm add-repo https://book.fffq.uk/i
 kpm update
 kpm install bookrelay-kindle
 ~~~

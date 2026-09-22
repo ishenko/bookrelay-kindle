@@ -16,7 +16,7 @@ def main():
     args = parser.parse_args()
     manifest_path = Path("packaging/kpm/manifest.json")
     manifest = json.loads(manifest_path.read_text())
-    if manifest["manifest_version"] != 3:
+    if manifest["manifest_version"] != 2:
         raise SystemExit("unsupported KPM manifest version")
     if manifest["supported_platforms"] != ["kindlehf"]:
         raise SystemExit("package must target kindlehf")

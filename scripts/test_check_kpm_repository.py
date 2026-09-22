@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CHECKER = ROOT / "scripts" / "check-kpm-repository.py"
 
 
-def run_checker(repository, package, tag="v0.1.1"):
+def run_checker(repository, package, tag="v0.1.2"):
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
         repository_path = tmp_path / "repository.json"
@@ -37,9 +37,9 @@ def run_checker(repository, package, tag="v0.1.1"):
 
 def valid_manifests():
     package = {
-        "manifest_version": 3,
+        "manifest_version": 2,
         "id": "bookrelay-kindle",
-        "version": [0, 1, 1],
+        "version": [0, 1, 2],
         "supported_platforms": ["kindlehf"],
     }
     repository = {
@@ -54,8 +54,8 @@ def valid_manifests():
                 "description": "BookRelay Kindle client.",
                 "artifacts": [
                     {
-                        "url": "https://github.com/ishenko/bookrelay-kindle/releases/download/v0.1.1/bookrelay-kindle-kindlehf.kpkg",
-                        "version": [0, 1, 1],
+                        "url": "https://github.com/ishenko/bookrelay-kindle/releases/download/v0.1.2/bookrelay-kindle-kindlehf.kpkg",
+                        "version": [0, 1, 2],
                         "dependencies": [],
                         "supported_platforms": ["kindlehf"],
                     }

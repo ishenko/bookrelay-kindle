@@ -42,7 +42,7 @@ kindlehf package for Paperwhite 11 and 12.
 
 Copy the complete bookrelay-kpm folder to the Kindle USB root. The expected
 paths are /mnt/us/bookrelay-kpm/manifest.json and
-/mnt/us/bookrelay-kpm/packages/bookrelay-kindle_0.1.1_kindlehf.kpkg.
+/mnt/us/bookrelay-kpm/packages/bookrelay-kindle_0.1.2_kindlehf.kpkg.
 Then run:
 
     kpm add-repo file:///mnt/us/bookrelay-kpm/manifest.json

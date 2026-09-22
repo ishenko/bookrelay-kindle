@@ -26,8 +26,8 @@ def validate(repository, package, release_tag):
     package_id = package.get("id")
     package_version = package.get("version")
     package_platforms = package.get("supported_platforms")
-    if package.get("manifest_version") != 3:
-        fail("package manifest_version must be 3")
+    if package.get("manifest_version") != 2:
+        fail("package manifest_version must be 2")
     if package_id != EXPECTED_PACKAGE_ID:
         fail("package id must be bookrelay-kindle")
     if package_platforms != [EXPECTED_PLATFORM]:
@@ -59,7 +59,7 @@ def main():
     parser = argparse.ArgumentParser(description="Validate the BookRelay KPM repository manifest")
     parser.add_argument("--repository-manifest", type=Path, default=Path("kpm/manifest.json"))
     parser.add_argument("--package-manifest", type=Path, default=Path("packaging/kpm/manifest.json"))
-    parser.add_argument("--release-tag", default="v0.1.1")
+    parser.add_argument("--release-tag", default="v0.1.2")
     args = parser.parse_args()
 
     try:

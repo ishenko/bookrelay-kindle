@@ -525,7 +525,7 @@ static void build_ui(App *app) {
     gtk_box_pack_start(GTK_BOX(toolbar), pair_button, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), settings_button, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), exit_button, FALSE, FALSE, 0);
-    gtk_container_add(GTK_CONTAINER(scroll), app->results);
+    gtk_scrolled_window_add_with_viewport(GTK_SCROLLED_WINDOW(scroll), app->results);
     gtk_box_pack_start(GTK_BOX(root), toolbar, FALSE, FALSE, 8);
     gtk_box_pack_start(GTK_BOX(root), scroll, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(navigation), previous_page, FALSE, FALSE, 0);

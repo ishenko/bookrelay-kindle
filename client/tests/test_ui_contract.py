@@ -22,6 +22,14 @@ class KindleUiContractTests(unittest.TestCase):
         self.assertIn('gtk_button_new_with_label("Назад")', source)
         self.assertIn('gtk_button_new_with_label("Дальше")', source)
 
+    def test_results_box_is_wrapped_for_kindlehf_scrolled_window(self):
+        source = Path(__file__).parents[1].joinpath("src", "main.c").read_text()
+        self.assertIn(
+            "gtk_scrolled_window_add_with_viewport(GTK_SCROLLED_WINDOW(scroll), app->results)",
+            source,
+        )
+        self.assertNotIn("gtk_container_add(GTK_CONTAINER(scroll), app->results)", source)
+
     def test_native_ui_has_confirmed_exit_action(self):
         source = Path(__file__).parents[1].joinpath("src", "main.c").read_text()
         self.assertIn('gtk_button_new_with_label("Выйти")', source)

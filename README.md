@@ -47,6 +47,15 @@ This repository does not claim a local macOS build is a Kindle SDK build. CI com
 
 ## Development
 
+### Browser preview
+
+Before installing the KPM package, open the clickable browser preview of the Kindle UI. It uses local demo fixtures and mock relay responses; it does not contact Flibusta, Amazon, SMTP, or a Kindle device.
+
+    cd preview
+    python3 -m http.server 4173
+
+Open http://127.0.0.1:4173 in a browser. The preview covers search, categories, page navigation, book details, pairing, settings, and the simulated delivery status flow. It is a visual interaction check, not a Kindle SDK build or an emulator of the native GTK binary.
+
 Run the relay tests locally:
 
     PYTHONPATH=relay python -m unittest discover -s relay/tests -v

@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BookRelay Kindle — preview</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="stage">
+    <section class="device" aria-label="BookRelay Kindle browser preview">
+      <div class="preview-ribbon">Browser preview · mock relay · устройство не затрагивается</div>
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">BOOKRELAY</p>
+          <h1>Kindle library</h1>
+        </div>
+        <div class="device-meta">
+          <span class="target-badge">PW11 / PW12</span>
+          <span>5.19.0+</span>
+          <span class="wifi" title="Mock network connected">●</span>
+        </div>
+      </header>
+
+      <section class="toolbar" aria-label="Поиск и управление">
+        <form id="search-form" class="search">
+          <label class="sr-only" for="search-input">Поиск по названию или автору</label>
+          <span class="search-icon">⌕</span>
+          <input id="search-input" type="search" placeholder="Название или автор" autocomplete="off">
+          <button class="ink-button small" type="submit">Искать</button>
+        </form>
+        <div class="toolbar-actions">
+          <button id="pair-button" class="outline-button" type="button">Pairing</button>
+          <button id="settings-button" class="icon-button" type="button" aria-label="Открыть настройки">⚙</button>
+        </div>
+      </section>
+
+      <section class="status-strip" aria-live="polite">
+        <span class="status-dot"></span>
+        <span id="status-text">Готово к поиску</span>
+        <span class="status-right" id="connection-status">Relay подключён</span>
+      </section>
+
+      <section class="category-row" aria-label="Категории">
+        <button class="category active" data-category="all" type="button">Все</button>
+        <button class="category" data-category="Фантастика" type="button">Фантастика</button>
+        <button class="category" data-category="Классика" type="button">Классика</button>
+        <button class="category" data-category="Нон-фикшн" type="button">Нон-фикшн</button>
+        <button class="category" data-category="Детектив" type="button">Детектив</button>
+      </section>
+
+      <section class="section-heading">
+        <div>
+          <p class="eyebrow">ПОИСК FLIBUSTA · DEMO FIXTURE</p>
+          <h2 id="results-heading">Рекомендуем почитать</h2>
+        </div>
+        <span class="result-count" id="result-count">6 книг</span>
+      </section>
+
+      <section id="book-grid" class="book-grid" aria-label="Результаты поиска"></section>
+
+      <section id="empty-state" class="empty-state hidden">
+        <div class="empty-icon">⌕</div>
+        <h2>Ничего не найдено</h2>
+        <p>Попробуйте другой запрос или выберите категорию «Все».</p>
+      </section>
+
+      <footer class="bottom-bar">
+        <button id="previous-page" class="page-button" type="button">← Назад</button>
+        <span id="page-label">Страница 1 из 2</span>
+        <button id="next-page" class="page-button" type="button">Дальше →</button>
+      </footer>
+    </section>
+  </main>
+
+  <div id="modal-root" class="modal-root hidden" aria-live="assertive"></div>
+  <script src="app.js"></script>
+</body>
+</html>

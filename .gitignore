@@ -8,4 +8,6 @@ relay/data/
 client/build*/
 dist/
 .superpowers/
+.playwright-cli/
 .DS_Store
+output/playwright/

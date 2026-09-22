@@ -8,6 +8,8 @@
 #include <sys/stat.h>
 
 #define APP_NAME "BookRelay Kindle"
+#define KINDLE_APP_WINDOW_TITLE "L:A_N:application_PC:T_ID:bookrelay.kindle"
+#define KINDLE_DIALOG_WINDOW_TITLE "L:D_N:dialog_M:dismissable_ID:bookrelay.kindle.dialog"
 #define MAX_COVER_CACHE_BYTES (64u * 1024u * 1024u)
 
 typedef struct {
@@ -72,6 +74,10 @@ static void set_status(App *app, const gchar *message);
 static void show_error(App *app, const gchar *prefix, GError *error);
 static gboolean async_task_complete(gpointer userdata);
 static void show_details(GtkButton *button, gpointer userdata);
+
+static void set_kindle_dialog_role(GtkWidget *dialog) {
+    gtk_window_set_title(GTK_WINDOW(dialog), KINDLE_DIALOG_WINDOW_TITLE);
+}
 
 static void book_row_free(BookRow *row) {
     if (!row) return;
@@ -268,6 +274,7 @@ static void show_details(GtkButton *button, gpointer userdata) {
     GtkWidget *dialog = gtk_dialog_new_with_buttons(row->book->title, GTK_WINDOW(row->app->window), GTK_DIALOG_MODAL, "Закрыть", GTK_RESPONSE_CLOSE, "Скачать на Kindle", GTK_RESPONSE_ACCEPT, NULL);
     GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
     GtkWidget *label = gtk_label_new(NULL);
+    set_kindle_dialog_role(dialog);
     gchar *text = g_strdup_printf("%s\n\nАвтор: %s\n\n%s", row->book->title, row->book->author, row->book->description && *row->book->description ? row->book->description : "Описание отсутствует.");
     gtk_label_set_text(GTK_LABEL(label), text);
     gtk_label_set_line_wrap(GTK_LABEL(label), TRUE);
@@ -322,6 +329,7 @@ static void pair_clicked(GtkButton *button, gpointer userdata) {
     GtkWidget *table = gtk_table_new(2, 2, FALSE);
     GtkWidget *relay = gtk_entry_new();
     GtkWidget *code = gtk_entry_new();
+    set_kindle_dialog_role(dialog);
     gtk_entry_set_text(GTK_ENTRY(relay), app->config->relay_url);
     gtk_entry_set_max_length(GTK_ENTRY(code), 32);
     gtk_entry_set_activates_default(GTK_ENTRY(code), TRUE);
@@ -366,6 +374,7 @@ static void settings_clicked(GtkButton *button, gpointer userdata) {
     GtkWidget *dialog = gtk_dialog_new_with_buttons("Настройки", GTK_WINDOW(app->window), GTK_DIALOG_MODAL, "Отмена", GTK_RESPONSE_CANCEL, "Сохранить", GTK_RESPONSE_ACCEPT, NULL);
     GtkWidget *table = gtk_table_new(1, 2, FALSE);
     GtkWidget *relay = gtk_entry_new();
+    set_kindle_dialog_role(dialog);
     gtk_entry_set_text(GTK_ENTRY(relay), app->config->relay_url);
     gtk_table_attach_defaults(GTK_TABLE(table), gtk_label_new("Relay URL"), 0, 1, 0, 1);
     gtk_table_attach_defaults(GTK_TABLE(table), relay, 1, 2, 0, 1);
@@ -388,6 +397,7 @@ static void exit_clicked(GtkButton *button, gpointer userdata) {
         return;
     }
     dialog = gtk_message_dialog_new(GTK_WINDOW(app->window), GTK_DIALOG_MODAL, GTK_MESSAGE_QUESTION, GTK_BUTTONS_NONE, "Выйти из BookRelay Kindle?");
+    set_kindle_dialog_role(dialog);
     gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(dialog), "Все настройки и pairing останутся сохранены.");
     gtk_dialog_add_buttons(GTK_DIALOG(dialog), "Отмена", GTK_RESPONSE_CANCEL, "Выйти", GTK_RESPONSE_ACCEPT, NULL);
     gtk_widget_show_all(dialog);
@@ -515,7 +525,7 @@ static void build_ui(App *app) {
     app->previous_page = previous_page;
     app->next_page = next_page;
     app->page = 1;
-    gtk_window_set_title(GTK_WINDOW(app->window), APP_NAME);
+    gtk_window_set_title(GTK_WINDOW(app->window), KINDLE_APP_WINDOW_TITLE);
     gtk_window_set_default_size(GTK_WINDOW(app->window), 600, 800);
     gtk_combo_box_append_text(GTK_COMBO_BOX(app->categories), "Все категории");
     gtk_combo_box_set_active(GTK_COMBO_BOX(app->categories), 0);

@@ -36,6 +36,12 @@ class KindleUiContractTests(unittest.TestCase):
         self.assertIn("exit_clicked", source)
         self.assertIn("gtk_main_quit", source)
 
+    def test_native_windows_use_kindle_window_manager_titles(self):
+        source = Path(__file__).parents[1].joinpath("src", "main.c").read_text()
+        self.assertIn('KINDLE_APP_WINDOW_TITLE "L:A_N:application_PC:T_ID:bookrelay.kindle"', source)
+        self.assertIn('KINDLE_DIALOG_WINDOW_TITLE "L:D_N:dialog_M:dismissable_ID:bookrelay.kindle.dialog"', source)
+        self.assertIn("set_kindle_dialog_role(dialog)", source)
+
     def test_settings_do_not_expose_server_generated_device_id(self):
         source = Path(__file__).parents[1].joinpath("src", "main.c").read_text()
         config = Path(__file__).parents[1].joinpath("src", "config.c").read_text()

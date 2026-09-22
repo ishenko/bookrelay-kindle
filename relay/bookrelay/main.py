@@ -84,7 +84,7 @@ def create_app(db_path: Path | str | None = None, source=None, mailer=None, pair
     jobs = JobStore(root)
     delivery = DeliveryService(jobs, source, mailer)
     limiter = RateLimiter()
-    app = FastAPI(title="BookRelay Relay", version="0.1.0")
+    app = FastAPI(title="BookRelay Relay", version="0.1.1")
     app.state.pairing = pairing
     app.state.source = source
     app.state.delivery = delivery

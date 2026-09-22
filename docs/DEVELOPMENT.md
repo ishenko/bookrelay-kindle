@@ -21,7 +21,7 @@ The tested SDK setup uses the community Kindle SDK and the matching kindlehf too
     git clone --recurse-submodules https://github.com/KindleModding/kindle-sdk.git kindle-sdk
     wget https://github.com/KindleModding/koxtoolchain/releases/latest/download/kindlehf.tar.gz -O /tmp/kindlehf.tar.gz
     tar -xzf /tmp/kindlehf.tar.gz -C "$HOME"
-    sudo bash kindle-sdk/gen-sdk.sh kindlehf
+    sudo bash kindle-sdk/gen-sdk.sh kindlehf "$HOME/x-tools/arm-kindlehf-linux-gnueabihf"
 
 Then build with the generated cross file:
 

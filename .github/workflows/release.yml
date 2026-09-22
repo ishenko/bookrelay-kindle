@@ -31,7 +31,7 @@ jobs:
           tar -xzf /tmp/kindlehf.tar.gz -C "$HOME"
 
       - name: Generate Kindle SDK sysroot
-        run: sudo bash kindle-sdk/gen-sdk.sh kindlehf
+        run: sudo bash kindle-sdk/gen-sdk.sh kindlehf "$HOME/x-tools/arm-kindlehf-linux-gnueabihf"
 
       - name: Build kindlehf client
         run: |

@@ -16,8 +16,19 @@ The source adapter is fixture-tested. Add fixtures before changing selectors bec
 
 The client uses C11, GTK, GLib, GdkPixbuf and libcurl. A normal Linux build verifies the source and dependency wiring. A Kindle release must use the Kindle SDK cross compiler and the kindlehf sysroot.
 
-    meson setup client/build client --cross-file /path/to/kindlehf.ini
-    meson compile -C client/build
+The tested SDK setup uses the community Kindle SDK and the matching kindlehf toolchain. Keep both outside the repository:
+
+    git clone --recurse-submodules https://github.com/KindleModding/kindle-sdk.git kindle-sdk
+    wget https://github.com/KindleModding/koxtoolchain/releases/latest/download/kindlehf.tar.gz -O /tmp/kindlehf.tar.gz
+    tar -xzf /tmp/kindlehf.tar.gz -C "$HOME"
+    sudo bash kindle-sdk/gen-sdk.sh kindlehf
+
+Then build with the generated cross file:
+
+    meson setup client/build-kindlehf client --cross-file "$HOME/x-tools/arm-kindlehf-linux-gnueabihf/meson-crosscompile.txt"
+    meson compile -C client/build-kindlehf
+    file client/build-kindlehf/bookrelay-kindle
+    readelf -h client/build-kindlehf/bookrelay-kindle
 
 Do not copy a host Linux binary into a Kindle package. The package manifest declares kindlehf and firmware 5.19.0 as the minimum compatibility target.
 

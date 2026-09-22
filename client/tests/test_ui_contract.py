@@ -28,6 +28,20 @@ class KindleUiContractTests(unittest.TestCase):
         self.assertIn("openExitConfirmation", app)
         self.assertIn("Приложение закрыто", app)
 
+    def test_native_client_bounds_network_and_cache_work(self):
+        source = Path(__file__).parents[1].joinpath("src", "main.c").read_text()
+        api = Path(__file__).parents[1].joinpath("src", "api.c").read_text()
+        self.assertIn("MAX_COVER_CACHE_BYTES", source)
+        self.assertIn("g_compute_checksum_for_string", source)
+        self.assertIn("MAX_API_RESPONSE_BYTES", api)
+        self.assertIn("MAX_COVER_RESPONSE_BYTES", api)
+        self.assertIn("response->exceeded", api)
+
+    def test_native_network_work_runs_outside_gtk_main_loop(self):
+        source = Path(__file__).parents[1].joinpath("src", "main.c").read_text()
+        self.assertIn("g_thread_new", source)
+        self.assertIn("delete_event", source)
+
 
 if __name__ == "__main__":
     unittest.main()

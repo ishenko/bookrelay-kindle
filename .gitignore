@@ -11,3 +11,4 @@ dist/
 .playwright-cli/
 .DS_Store
 output/playwright/
+.toolchains/

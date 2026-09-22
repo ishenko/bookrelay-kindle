@@ -4,12 +4,23 @@
 #include <string.h>
 
 #define API_ERROR g_quark_from_static_string("bookrelay-api-error")
+#define MAX_API_RESPONSE_BYTES (2u * 1024u * 1024u)
+#define MAX_COVER_RESPONSE_BYTES (8u * 1024u * 1024u)
 
-typedef struct { GByteArray *data; } Response;
+typedef struct {
+    GByteArray *data;
+    gsize max_bytes;
+    gboolean exceeded;
+} Response;
 
 static size_t receive_body(char *ptr, size_t size, size_t count, void *userdata) {
     Response *response = userdata;
-    g_byte_array_append(response->data, (guint8 *)ptr, size * count);
+    gsize incoming = size * count;
+    if (incoming > response->max_bytes - response->data->len) {
+        response->exceeded = TRUE;
+        return 0;
+    }
+    g_byte_array_append(response->data, (guint8 *)ptr, incoming);
     return size * count;
 }
 
@@ -25,9 +36,9 @@ static gchar *url_encode(const gchar *value) {
     return result;
 }
 
-static gboolean request_bytes(const gchar *method, const gchar *url, const gchar *token, const gchar *body, GByteArray **payload, long *status, GError **error) {
+static gboolean request_bytes(const gchar *method, const gchar *url, const gchar *token, const gchar *body, gsize max_bytes, GByteArray **payload, long *status, GError **error) {
     CURL *curl = curl_easy_init();
-    Response response = { g_byte_array_new() };
+    Response response = { g_byte_array_new(), max_bytes, FALSE };
     struct curl_slist *headers = NULL;
     CURLcode result;
     gboolean ok = FALSE;
@@ -40,6 +51,7 @@ static gboolean request_bytes(const gchar *method, const gchar *url, const gchar
     curl_easy_setopt(curl, CURLOPT_URL, url);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+    curl_easy_setopt(curl, CURLOPT_MAXFILESIZE_LARGE, (curl_off_t)max_bytes);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, receive_body);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "BookRelay Kindle/0.1");
@@ -56,7 +68,9 @@ static gboolean request_bytes(const gchar *method, const gchar *url, const gchar
     if (headers) curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
     result = curl_easy_perform(curl);
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, status);
-    if (result != CURLE_OK) {
+    if (response.exceeded) {
+        g_set_error(error, API_ERROR, 3, "relay response exceeded %u bytes", (guint)max_bytes);
+    } else if (result != CURLE_OK) {
         g_set_error(error, API_ERROR, 2, "network request failed: %s", curl_easy_strerror(result));
     } else if (*status < 200 || *status >= 300) {
         g_set_error(error, API_ERROR, (gint)*status, "relay returned HTTP %ld", *status);
@@ -74,7 +88,7 @@ static gboolean request_bytes(const gchar *method, const gchar *url, const gchar
 static gchar *request(const gchar *method, const gchar *url, const gchar *token, const gchar *body, long *status, GError **error) {
     GByteArray *payload = NULL;
     gchar *output;
-    if (!request_bytes(method, url, token, body, &payload, status, error)) return NULL;
+    if (!request_bytes(method, url, token, body, MAX_API_RESPONSE_BYTES, &payload, status, error)) return NULL;
     output = g_strndup((gchar *)payload->data, payload->len);
     g_byte_array_free(payload, TRUE);
     return output;
@@ -256,12 +270,11 @@ gchar *bookrelay_api_delivery_status(const gchar *base_url, const gchar *token, 
     return state;
 }
 
-gboolean bookrelay_api_download(const gchar *url, GBytes **payload, GError **error) {
+gboolean bookrelay_api_download(const gchar *url, GByteArray **payload, GError **error) {
     GByteArray *bytes = NULL;
     long status;
-    if (!request_bytes("GET", url, NULL, NULL, &bytes, &status, error)) return FALSE;
-    *payload = g_bytes_new_take(bytes->data, bytes->len);
-    g_byte_array_free(bytes, FALSE);
+    if (!request_bytes("GET", url, NULL, NULL, MAX_COVER_RESPONSE_BYTES, &bytes, &status, error)) return FALSE;
+    *payload = bytes;
     return TRUE;
 }
 

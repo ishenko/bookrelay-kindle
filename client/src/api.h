@@ -25,7 +25,7 @@ BookRelayPairing *bookrelay_api_start_pairing(const gchar *base_url, const gchar
 gchar *bookrelay_api_pair_status(const gchar *base_url, const gchar *code, gchar **kindle_email, GError **error);
 gchar *bookrelay_api_send(const gchar *base_url, const gchar *token, const gchar *book_id, const gchar *title, GError **error);
 gchar *bookrelay_api_delivery_status(const gchar *base_url, const gchar *token, const gchar *job_id, GError **error);
-gboolean bookrelay_api_download(const gchar *url, GBytes **payload, GError **error);
+gboolean bookrelay_api_download(const gchar *url, GByteArray **payload, GError **error);
 void bookrelay_book_free(BookRelayBook *book);
 BookRelayBook *bookrelay_book_copy(const BookRelayBook *book);
 void bookrelay_pairing_free(BookRelayPairing *pairing);

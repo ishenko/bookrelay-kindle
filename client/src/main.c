@@ -5,8 +5,10 @@
 #include <gdk-pixbuf/gdk-pixbuf.h>
 #include <glib/gstdio.h>
 #include <curl/curl.h>
+#include <sys/stat.h>
 
 #define APP_NAME "BookRelay Kindle"
+#define MAX_COVER_CACHE_BYTES (64u * 1024u * 1024u)
 
 typedef struct {
     BookRelayConfig *config;
@@ -19,6 +21,8 @@ typedef struct {
     GtkWidget *previous_page;
     GtkWidget *next_page;
     guint page;
+    guint active_tasks;
+    gboolean pairing_poll_pending;
 } App;
 
 typedef struct {
@@ -30,10 +34,49 @@ typedef struct {
     App *app;
     gchar *job_id;
     guint attempts;
+    guint source_id;
+    gboolean request_pending;
 } DeliveryPoll;
+
+typedef enum {
+    TASK_SEARCH,
+    TASK_CATEGORIES,
+    TASK_START_PAIRING,
+    TASK_PAIR_STATUS,
+    TASK_SEND,
+    TASK_DELIVERY_STATUS,
+    TASK_COVER
+} TaskKind;
+
+typedef struct {
+    App *app;
+    TaskKind kind;
+    gchar *base_url;
+    gchar *token;
+    gchar *query;
+    gchar *device_id;
+    gchar *code;
+    gchar *book_id;
+    gchar *title;
+    gchar *job_id;
+    gchar *url;
+    guint page;
+    GtkWidget *image;
+    DeliveryPoll *delivery_poll;
+    GPtrArray *books;
+    GPtrArray *categories;
+    BookRelayPairing *pairing;
+    gchar *result_token;
+    gchar *email;
+    gchar *state;
+    GByteArray *cover_bytes;
+    GError *error;
+} AsyncTask;
 
 static void set_status(App *app, const gchar *message);
 static void show_error(App *app, const gchar *prefix, GError *error);
+static gboolean async_task_complete(gpointer userdata);
+static void show_details(GtkButton *button, gpointer userdata);
 
 static void book_row_free(BookRow *row) {
     if (!row) return;
@@ -41,35 +84,89 @@ static void book_row_free(BookRow *row) {
     g_free(row);
 }
 
-static gboolean poll_delivery(gpointer userdata) {
-    DeliveryPoll *poll = userdata;
-    GError *error = NULL;
-    gchar *state = bookrelay_api_delivery_status(poll->app->config->relay_url, poll->app->config->token, poll->job_id, &error);
-    poll->attempts++;
-    if (!state) {
-        if (poll->attempts >= 20) {
-            show_error(poll->app, "Не удалось получить статус доставки", error);
-            g_free(poll->job_id);
-            g_free(poll);
-            return G_SOURCE_REMOVE;
-        }
-        g_clear_error(&error);
-        return G_SOURCE_CONTINUE;
+static void async_task_free(AsyncTask *task) {
+    if (!task) return;
+    g_free(task->base_url);
+    g_free(task->token);
+    g_free(task->query);
+    g_free(task->device_id);
+    g_free(task->code);
+    g_free(task->book_id);
+    g_free(task->title);
+    g_free(task->job_id);
+    g_free(task->url);
+    if (task->image) g_object_unref(task->image);
+    if (task->books) g_ptr_array_free(task->books, TRUE);
+    if (task->categories) g_ptr_array_free(task->categories, TRUE);
+    bookrelay_pairing_free(task->pairing);
+    g_free(task->result_token);
+    g_free(task->email);
+    g_free(task->state);
+    if (task->cover_bytes) g_byte_array_free(task->cover_bytes, TRUE);
+    if (task->error) g_error_free(task->error);
+    g_free(task);
+}
+
+static AsyncTask *async_task_new(App *app, TaskKind kind) {
+    AsyncTask *task = g_new0(AsyncTask, 1);
+    task->app = app;
+    task->kind = kind;
+    app->active_tasks++;
+    return task;
+}
+
+static gpointer async_task_worker(gpointer userdata) {
+    AsyncTask *task = userdata;
+    switch (task->kind) {
+        case TASK_SEARCH:
+            task->books = bookrelay_api_search(task->base_url, task->token, task->query, (gint)task->page, &task->error);
+            break;
+        case TASK_CATEGORIES:
+            task->categories = bookrelay_api_categories(task->base_url, task->token, &task->error);
+            break;
+        case TASK_START_PAIRING:
+            task->pairing = bookrelay_api_start_pairing(task->base_url, task->device_id, &task->error);
+            break;
+        case TASK_PAIR_STATUS:
+            task->result_token = bookrelay_api_pair_status(task->base_url, task->code, &task->email, &task->error);
+            break;
+        case TASK_SEND:
+            task->job_id = bookrelay_api_send(task->base_url, task->token, task->book_id, task->title, &task->error);
+            break;
+        case TASK_DELIVERY_STATUS:
+            task->state = bookrelay_api_delivery_status(task->base_url, task->token, task->job_id, &task->error);
+            break;
+        case TASK_COVER:
+            bookrelay_api_download(task->url, &task->cover_bytes, &task->error);
+            break;
     }
-    if (g_strcmp0(state, "sent") == 0) {
-        set_status(poll->app, "Relay отправил EPUB; ожидайте доставку Amazon");
-    } else if (g_strcmp0(state, "failed") == 0) {
-        set_status(poll->app, "Relay не смог отправить EPUB");
-    } else if (poll->attempts >= 20) {
-        set_status(poll->app, "Задание всё ещё выполняется; проверьте статус relay позже");
-    } else {
-        g_free(state);
-        return G_SOURCE_CONTINUE;
+    g_idle_add(async_task_complete, task);
+    return NULL;
+}
+
+static gboolean start_async_task(AsyncTask *task) {
+    GThread *thread;
+#if GLIB_CHECK_VERSION(2, 32, 0)
+    thread = g_thread_new("bookrelay-network", async_task_worker, task);
+#else
+    GError *thread_error = NULL;
+    thread = g_thread_create(async_task_worker, task, FALSE, &thread_error);
+    if (thread_error) g_error_free(thread_error);
+#endif
+    if (!thread) {
+        task->app->active_tasks--;
+        async_task_free(task);
+        return FALSE;
     }
-    g_free(state);
-    g_free(poll->job_id);
-    g_free(poll);
-    return G_SOURCE_REMOVE;
+#if GLIB_CHECK_VERSION(2, 32, 0)
+    g_thread_unref(thread);
+#endif
+    return TRUE;
+}
+
+static void copy_common_task_fields(AsyncTask *task, App *app) {
+    task->base_url = g_strdup(app->config->relay_url);
+    task->token = g_strdup(app->config->token);
 }
 
 static void set_status(App *app, const gchar *message) {
@@ -80,17 +177,53 @@ static void show_error(App *app, const gchar *prefix, GError *error) {
     gchar *message = g_strdup_printf("%s: %s", prefix, error ? error->message : "unknown error");
     set_status(app, message);
     g_free(message);
-    g_clear_error(&error);
+}
+
+static gboolean cache_has_room(const gchar *directory, const gchar *path, gsize incoming) {
+    GDir *dir = g_dir_open(directory, 0, NULL);
+    const gchar *name;
+    guint64 total = 0;
+    struct stat existing;
+    gboolean has_existing = g_stat(path, &existing) == 0 && S_ISREG(existing.st_mode);
+    guint64 existing_size = has_existing ? (guint64)existing.st_size : 0;
+    if (!dir) return incoming <= MAX_COVER_CACHE_BYTES;
+    while ((name = g_dir_read_name(dir)) != NULL) {
+        gchar *entry = g_build_filename(directory, name, NULL);
+        struct stat info;
+        if (g_stat(entry, &info) == 0 && S_ISREG(info.st_mode)) total += (guint64)info.st_size;
+        g_free(entry);
+    }
+    g_dir_close(dir);
+    if (total >= existing_size) total -= existing_size;
+    return incoming <= MAX_COVER_CACHE_BYTES && total <= MAX_COVER_CACHE_BYTES - incoming;
 }
 
 static gchar *cover_cache_path(const gchar *book_id) {
     const gchar *base = g_get_user_data_dir();
     gchar *directory = g_build_filename(base, "bookrelay", "covers", NULL);
+    gchar *checksum = g_compute_checksum_for_string(G_CHECKSUM_SHA256, book_id ? book_id : "", -1);
     gchar *path;
     g_mkdir_with_parents(directory, 0700);
-    path = g_build_filename(directory, book_id, NULL);
+    path = g_build_filename(directory, checksum, NULL);
+    g_free(checksum);
     g_free(directory);
     return path;
+}
+
+static GdkPixbuf *pixbuf_from_bytes(GByteArray *bytes) {
+    GdkPixbufLoader *loader;
+    GdkPixbuf *pixbuf;
+    gsize length = bytes->len;
+    const guint8 *data = bytes->data;
+    loader = gdk_pixbuf_loader_new();
+    if (!gdk_pixbuf_loader_write(loader, data, length, NULL) || !gdk_pixbuf_loader_close(loader, NULL)) {
+        g_object_unref(loader);
+        return NULL;
+    }
+    pixbuf = gdk_pixbuf_loader_get_pixbuf(loader);
+    if (pixbuf) g_object_ref(pixbuf);
+    g_object_unref(loader);
+    return pixbuf;
 }
 
 static GtkWidget *make_cover(App *app, BookRelayBook *book) {
@@ -98,63 +231,25 @@ static GtkWidget *make_cover(App *app, BookRelayBook *book) {
     GdkPixbuf *pixbuf = NULL;
     GtkWidget *image;
     if (g_file_test(path, G_FILE_TEST_EXISTS)) pixbuf = gdk_pixbuf_new_from_file_at_scale(path, 90, 130, TRUE, NULL);
-    if (!pixbuf && book->cover_url && *book->cover_url) {
-        GError *error = NULL;
-        GBytes *bytes = NULL;
-        if (bookrelay_api_download(book->cover_url, &bytes, &error)) {
-            g_file_set_contents(path, g_bytes_get_data(bytes, NULL), (gssize)g_bytes_get_size(bytes), NULL);
-            pixbuf = gdk_pixbuf_new_from_file_at_scale(path, 90, 130, TRUE, NULL);
-            g_bytes_unref(bytes);
-        }
-        g_clear_error(&error);
-    }
     image = pixbuf ? gtk_image_new_from_pixbuf(pixbuf) : gtk_image_new_from_icon_name("text-x-generic", GTK_ICON_SIZE_DIALOG);
     if (pixbuf) g_object_unref(pixbuf);
+    if (!pixbuf && book->cover_url && *book->cover_url) {
+        AsyncTask *task = async_task_new(app, TASK_COVER);
+        copy_common_task_fields(task, app);
+        task->book_id = g_strdup(book->id);
+        task->url = g_strdup(book->cover_url);
+        task->image = g_object_ref(image);
+        start_async_task(task);
+    }
     g_free(path);
     return image;
 }
 
-static void send_book(App *app, BookRelayBook *book) {
-    GError *error = NULL;
-    gchar *job_id;
-    if (!app->config->token || !*app->config->token) {
-        set_status(app, "Сначала выполните pairing в настройках");
-        return;
-    }
-    set_status(app, "Отправка книги на Kindle…");
-    job_id = bookrelay_api_send(app->config->relay_url, app->config->token, book->id, book->title, &error);
-    if (!job_id) { show_error(app, "Не удалось создать задание", error); return; }
-    set_status(app, "Задание создано, relay готовит EPUB…");
-    DeliveryPoll *poll = g_new0(DeliveryPoll, 1);
-    poll->app = app;
-    poll->job_id = job_id;
-    g_timeout_add_seconds(3, poll_delivery, poll);
-}
-
-static void show_details(GtkButton *button, gpointer userdata) {
-    BookRow *row = userdata;
-    GtkWidget *dialog = gtk_dialog_new_with_buttons(row->book->title, GTK_WINDOW(row->app->window), GTK_DIALOG_MODAL, "Закрыть", GTK_RESPONSE_CLOSE, "Скачать на Kindle", GTK_RESPONSE_ACCEPT, NULL);
-    GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
-    GtkWidget *label = gtk_label_new(NULL);
-    gchar *text = g_strdup_printf("%s\n\nАвтор: %s\n\n%s", row->book->title, row->book->author, row->book->description && *row->book->description ? row->book->description : "Описание отсутствует.");
-    gtk_label_set_text(GTK_LABEL(label), text);
-    gtk_label_set_line_wrap(GTK_LABEL(label), TRUE);
-    gtk_box_pack_start(GTK_BOX(content), label, TRUE, TRUE, 12);
-    gtk_widget_show_all(dialog);
-    if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) send_book(row->app, row->book);
-    gtk_widget_destroy(dialog);
-    g_free(text);
-}
-
-static void clear_results(App *app) {
+static void render_books(App *app, GPtrArray *books) {
+    guint i;
     GList *children = gtk_container_get_children(GTK_CONTAINER(app->results));
     for (GList *item = children; item; item = item->next) gtk_widget_destroy(GTK_WIDGET(item->data));
     g_list_free(children);
-}
-
-static void render_books(App *app, GPtrArray *books) {
-    guint i;
-    clear_results(app);
     for (i = 0; i < books->len; i++) {
         BookRelayBook *book = g_ptr_array_index(books, i);
         GtkWidget *row = gtk_hbox_new(FALSE, 10);
@@ -179,32 +274,47 @@ static void render_books(App *app, GPtrArray *books) {
     gtk_widget_show_all(app->results);
 }
 
+static void show_details(GtkButton *button, gpointer userdata) {
+    BookRow *row = userdata;
+    GtkWidget *dialog = gtk_dialog_new_with_buttons(row->book->title, GTK_WINDOW(row->app->window), GTK_DIALOG_MODAL, "Закрыть", GTK_RESPONSE_CLOSE, "Скачать на Kindle", GTK_RESPONSE_ACCEPT, NULL);
+    GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+    GtkWidget *label = gtk_label_new(NULL);
+    gchar *text = g_strdup_printf("%s\n\nАвтор: %s\n\n%s", row->book->title, row->book->author, row->book->description && *row->book->description ? row->book->description : "Описание отсутствует.");
+    gtk_label_set_text(GTK_LABEL(label), text);
+    gtk_label_set_line_wrap(GTK_LABEL(label), TRUE);
+    gtk_box_pack_start(GTK_BOX(content), label, TRUE, TRUE, 12);
+    gtk_widget_show_all(dialog);
+    if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
+        AsyncTask *task;
+        if (!row->app->config->token || !*row->app->config->token) {
+            set_status(row->app, "Сначала выполните pairing в настройках");
+        } else {
+            set_status(row->app, "Отправляем книгу на Kindle…");
+            task = async_task_new(row->app, TASK_SEND);
+            copy_common_task_fields(task, row->app);
+            task->book_id = g_strdup(row->book->id);
+            task->title = g_strdup(row->book->title);
+            start_async_task(task);
+        }
+    }
+    gtk_widget_destroy(dialog);
+    g_free(text);
+}
+
 static void search_page(App *app, guint page) {
     const gchar *query = gtk_entry_get_text(GTK_ENTRY(app->query));
-    GError *error = NULL;
-    GPtrArray *books;
-
+    AsyncTask *task;
     if (!query || !*query) return;
     set_status(app, "Ищем книги…");
-    books = bookrelay_api_search(app->config->relay_url, app->config->token, query, page, &error);
-    if (!books) { show_error(app, "Поиск не выполнен", error); return; }
-    if (books->len == 0 && page > 1) {
-        gtk_widget_set_sensitive(app->next_page, FALSE);
-        set_status(app, "Это последняя страница");
-        g_ptr_array_free(books, TRUE);
-        return;
-    }
-    app->page = page;
-    render_books(app, books);
-    gtk_widget_set_sensitive(app->previous_page, page > 1);
-    gtk_widget_set_sensitive(app->next_page, books->len > 0);
-    set_status(app, "Поиск завершён");
-    g_ptr_array_free(books, TRUE);
+    task = async_task_new(app, TASK_SEARCH);
+    copy_common_task_fields(task, app);
+    task->query = g_strdup(query);
+    task->page = page;
+    start_async_task(task);
 }
 
 static void search_clicked(GtkButton *button, gpointer userdata) {
-    App *app = userdata;
-    search_page(app, 1);
+    search_page((App *)userdata, 1);
 }
 
 static void previous_page_clicked(GtkButton *button, gpointer userdata) {
@@ -220,35 +330,36 @@ static void next_page_clicked(GtkButton *button, gpointer userdata) {
 static gboolean poll_pairing(gpointer userdata) {
     App *app = userdata;
     const gchar *code = g_object_get_data(G_OBJECT(app->window), "pairing-code");
-    GError *error = NULL;
-    gchar *email = NULL;
-    gchar *token;
-    if (!code) return G_SOURCE_REMOVE;
-    token = bookrelay_api_pair_status(app->config->relay_url, code, &email, &error);
-    if (token) {
-        g_free(app->config->token); app->config->token = token;
-        if (email) { g_free(app->config->kindle_email); app->config->kindle_email = email; }
-        bookrelay_config_save(app->config, app->config_path, NULL);
-        set_status(app, "Kindle привязан");
-        g_object_set_data(G_OBJECT(app->window), "pairing-code", NULL);
-        return G_SOURCE_REMOVE;
-    }
-    g_clear_error(&error);
-    return G_SOURCE_CONTINUE;
+    AsyncTask *task;
+    if (!code || app->pairing_poll_pending) return TRUE;
+    app->pairing_poll_pending = TRUE;
+    task = async_task_new(app, TASK_PAIR_STATUS);
+    copy_common_task_fields(task, app);
+    task->code = g_strdup(code);
+    start_async_task(task);
+    return TRUE;
 }
 
 static void pair_clicked(GtkButton *button, gpointer userdata) {
     App *app = userdata;
-    GError *error = NULL;
-    gchar *message;
-    BookRelayPairing *pairing = bookrelay_api_start_pairing(app->config->relay_url, app->config->device_id, &error);
-    if (!pairing) { show_error(app, "Pairing не запущен", error); return; }
-    g_object_set_data_full(G_OBJECT(app->window), "pairing-code", g_strdup(pairing->code), g_free);
-    message = g_strdup_printf("Код pairing: %s\nОткройте relay /pair на компьютере и введите этот код вместе с Kindle Email", pairing->code);
-    set_status(app, message);
-    g_free(message);
-    g_timeout_add_seconds(3, poll_pairing, app);
-    bookrelay_pairing_free(pairing);
+    AsyncTask *task = async_task_new(app, TASK_START_PAIRING);
+    copy_common_task_fields(task, app);
+    task->device_id = g_strdup(app->config->device_id);
+    set_status(app, "Запрашиваем одноразовый код pairing…");
+    start_async_task(task);
+}
+
+static gboolean poll_delivery(gpointer userdata) {
+    DeliveryPoll *poll = userdata;
+    AsyncTask *task;
+    if (poll->request_pending) return TRUE;
+    poll->request_pending = TRUE;
+    task = async_task_new(poll->app, TASK_DELIVERY_STATUS);
+    copy_common_task_fields(task, poll->app);
+    task->job_id = g_strdup(poll->job_id);
+    task->delivery_poll = poll;
+    start_async_task(task);
+    return TRUE;
 }
 
 static void settings_clicked(GtkButton *button, gpointer userdata) {
@@ -277,16 +388,129 @@ static void settings_clicked(GtkButton *button, gpointer userdata) {
 
 static void exit_clicked(GtkButton *button, gpointer userdata) {
     App *app = userdata;
-    GtkWidget *dialog = gtk_message_dialog_new(GTK_WINDOW(app->window), GTK_DIALOG_MODAL, GTK_MESSAGE_QUESTION, GTK_BUTTONS_NONE, "Выйти из BookRelay Kindle?");
+    GtkWidget *dialog;
+    if (app->active_tasks > 0) {
+        set_status(app, "Дождитесь завершения операции перед выходом");
+        return;
+    }
+    dialog = gtk_message_dialog_new(GTK_WINDOW(app->window), GTK_DIALOG_MODAL, GTK_MESSAGE_QUESTION, GTK_BUTTONS_NONE, "Выйти из BookRelay Kindle?");
     gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(dialog), "Все настройки и pairing останутся сохранены.");
     gtk_dialog_add_buttons(GTK_DIALOG(dialog), "Отмена", GTK_RESPONSE_CANCEL, "Выйти", GTK_RESPONSE_ACCEPT, NULL);
     gtk_widget_show_all(dialog);
-    if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
-        gtk_widget_destroy(dialog);
-        gtk_main_quit();
-        return;
-    }
+    if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) gtk_main_quit();
     gtk_widget_destroy(dialog);
+}
+
+static gboolean delete_event(GtkWidget *widget, GdkEvent *event, gpointer userdata) {
+    App *app = userdata;
+    if (app->active_tasks > 0) {
+        set_status(app, "Дождитесь завершения операции перед выходом");
+        return TRUE;
+    }
+    return FALSE;
+}
+
+static gboolean async_task_complete(gpointer userdata) {
+    AsyncTask *task = userdata;
+    App *app = task->app;
+    switch (task->kind) {
+        case TASK_SEARCH:
+            if (!task->books) {
+                show_error(app, "Поиск не выполнен", task->error);
+            } else if (task->books->len == 0 && task->page > 1) {
+                gtk_widget_set_sensitive(app->next_page, FALSE);
+                set_status(app, "Это последняя страница");
+            } else {
+                app->page = task->page;
+                render_books(app, task->books);
+                gtk_widget_set_sensitive(app->previous_page, task->page > 1);
+                gtk_widget_set_sensitive(app->next_page, task->books->len > 0);
+                set_status(app, "Поиск завершён");
+            }
+            break;
+        case TASK_CATEGORIES:
+            if (task->categories) {
+                guint i;
+                for (i = 0; i < task->categories->len; i++) gtk_combo_box_append_text(GTK_COMBO_BOX(app->categories), g_ptr_array_index(task->categories, i));
+            }
+            break;
+        case TASK_START_PAIRING:
+            if (!task->pairing) {
+                show_error(app, "Pairing не запущен", task->error);
+            } else {
+                gchar *message;
+                g_object_set_data_full(G_OBJECT(app->window), "pairing-code", g_strdup(task->pairing->code), g_free);
+                message = g_strdup_printf("Код pairing: %s\nОткройте relay /pair на компьютере и введите этот код вместе с Kindle Email", task->pairing->code);
+                set_status(app, message);
+                g_free(message);
+                g_timeout_add_seconds(3, poll_pairing, app);
+            }
+            break;
+        case TASK_PAIR_STATUS:
+            app->pairing_poll_pending = FALSE;
+            if (task->result_token) {
+                g_free(app->config->token); app->config->token = g_strdup(task->result_token);
+                if (task->email) { g_free(app->config->kindle_email); app->config->kindle_email = g_strdup(task->email); }
+                bookrelay_config_save(app->config, app->config_path, NULL);
+                set_status(app, "Kindle привязан");
+                g_object_set_data(G_OBJECT(app->window), "pairing-code", NULL);
+            }
+            break;
+        case TASK_SEND:
+            if (!task->job_id) {
+                show_error(app, "Не удалось создать задание", task->error);
+            } else {
+                DeliveryPoll *poll = g_new0(DeliveryPoll, 1);
+                poll->app = app;
+                poll->job_id = g_strdup(task->job_id);
+                poll->source_id = g_timeout_add_seconds(3, poll_delivery, poll);
+                set_status(app, "Задание создано, relay готовит EPUB…");
+            }
+            break;
+        case TASK_DELIVERY_STATUS:
+            if (task->delivery_poll) {
+                DeliveryPoll *poll = task->delivery_poll;
+                poll->request_pending = FALSE;
+                poll->attempts++;
+                if (!task->state && poll->attempts < 20) break;
+                if (!task->state) {
+                    show_error(app, "Не удалось получить статус доставки", task->error);
+                } else if (g_strcmp0(task->state, "sent") == 0) {
+                    set_status(app, "Relay отправил EPUB; ожидайте доставку Amazon");
+                } else if (g_strcmp0(task->state, "failed") == 0) {
+                    set_status(app, "Relay не смог отправить EPUB");
+                } else if (poll->attempts < 20) {
+                    break;
+                } else {
+                    set_status(app, "Задание всё ещё выполняется; проверьте статус relay позже");
+                }
+                if (poll->source_id) g_source_remove(poll->source_id);
+                g_free(poll->job_id);
+                g_free(poll);
+            }
+            break;
+        case TASK_COVER:
+            if (task->cover_bytes) {
+                gchar *path = cover_cache_path(task->book_id);
+                gchar *directory = g_path_get_dirname(path);
+                gsize length = task->cover_bytes->len;
+                const guint8 *data = task->cover_bytes->data;
+                if (cache_has_room(directory, path, length)) g_file_set_contents(path, (const gchar *)data, (gssize)length, NULL);
+                g_free(directory);
+                {
+                    GdkPixbuf *pixbuf = pixbuf_from_bytes(task->cover_bytes);
+                    if (pixbuf) {
+                        gtk_image_set_from_pixbuf(GTK_IMAGE(task->image), pixbuf);
+                        g_object_unref(pixbuf);
+                    }
+                }
+                g_free(path);
+            }
+            break;
+    }
+    if (app->active_tasks > 0) app->active_tasks--;
+    async_task_free(task);
+    return FALSE;
 }
 
 static void build_ui(App *app) {
@@ -310,7 +534,6 @@ static void build_ui(App *app) {
     app->page = 1;
     gtk_window_set_title(GTK_WINDOW(app->window), APP_NAME);
     gtk_window_set_default_size(GTK_WINDOW(app->window), 600, 800);
-    gtk_entry_set_text(GTK_ENTRY(app->query), "");
     gtk_combo_box_append_text(GTK_COMBO_BOX(app->categories), "Все категории");
     gtk_combo_box_set_active(GTK_COMBO_BOX(app->categories), 0);
     gtk_box_pack_start(GTK_BOX(toolbar), app->query, TRUE, TRUE, 0);
@@ -333,18 +556,14 @@ static void build_ui(App *app) {
     g_signal_connect(exit_button, "clicked", G_CALLBACK(exit_clicked), app);
     g_signal_connect(previous_page, "clicked", G_CALLBACK(previous_page_clicked), app);
     g_signal_connect(next_page, "clicked", G_CALLBACK(next_page_clicked), app);
+    g_signal_connect(app->window, "delete-event", G_CALLBACK(delete_event), app);
     gtk_widget_set_sensitive(previous_page, FALSE);
     gtk_widget_set_sensitive(next_page, FALSE);
     gtk_widget_show_all(app->window);
     if (app->config->token && *app->config->token) {
-        GError *error = NULL;
-        GPtrArray *categories = bookrelay_api_categories(app->config->relay_url, app->config->token, &error);
-        if (categories) {
-            guint i;
-            for (i = 0; i < categories->len; i++) gtk_combo_box_append_text(GTK_COMBO_BOX(app->categories), g_ptr_array_index(categories, i));
-            g_ptr_array_free(categories, TRUE);
-        }
-        g_clear_error(&error);
+        AsyncTask *task = async_task_new(app, TASK_CATEGORIES);
+        copy_common_task_fields(task, app);
+        start_async_task(task);
     }
 }
 
@@ -353,11 +572,13 @@ int main(int argc, char **argv) {
     const gchar *home = g_get_user_data_dir();
     app.config_path = g_build_filename(home, "bookrelay", "config.ini", NULL);
     app.config = bookrelay_config_load(app.config_path);
+#if !GLIB_CHECK_VERSION(2, 32, 0)
+    g_thread_init(NULL);
+#endif
     gtk_init(&argc, &argv);
     curl_global_init(CURL_GLOBAL_DEFAULT);
     build_ui(&app);
     g_signal_connect(app.window, "destroy", G_CALLBACK(gtk_main_quit), NULL);
-    gtk_widget_show_all(app.window);
     gtk_main();
     bookrelay_config_free(app.config);
     g_free(app.config_path);

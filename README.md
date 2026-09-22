@@ -43,7 +43,7 @@ Build the client with the Kindle SDK and its kindlehf cross file:
 
 Copy the resulting package to Kindle user storage and install it using the KPM package manager available in the jailbreak environment. The package contains only a user-storage application and hooks. Follow the removal instructions in docs/KINDLE-SETUP.md if you need to roll back.
 
-This repository does not claim a local macOS build is a Kindle SDK build. CI compiles the GTK client on Linux as an integration check; a release binary must be built with the Kindle SDK for kindlehf.
+This repository does not claim a local macOS build is a Kindle SDK build. CI runs both a host Linux integration build and a real kindlehf cross-build; release artifacts are produced from the latter.
 
 ## Development
 

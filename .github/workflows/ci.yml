@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  relay:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install -r relay/requirements.txt httpx
+      - run: PYTHONPATH=relay python -m unittest discover -s relay/tests -v
+      - run: python -m py_compile relay/bookrelay/*.py relay/bookrelay/source/*.py
+
+  kindle-client:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update
+      - run: sudo apt-get install -y meson ninja-build pkg-config gcc libgtk2.0-dev libcurl4-openssl-dev libglib2.0-dev libgdk-pixbuf2.0-dev
+      - run: meson setup client/build client
+      - run: meson compile -C client/build
+      - run: python3 -m unittest client.tests.test_ui_contract -v
+
+  packaging:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: python scripts/check-kpm.py
+      - run: python -m json.tool packaging/kpm/manifest.json >/dev/null
+      - run: git diff --check

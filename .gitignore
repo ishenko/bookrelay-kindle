@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+.env
+*.sqlite3
+relay/data/
+client/build*/
+dist/
+.superpowers/
+.DS_Store

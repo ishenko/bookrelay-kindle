@@ -7,3 +7,8 @@ __pycache__
 data
 client/build*
 dist
+.toolchains
+.playwright-cli
+preview
+relay/.venv
+relay/.pytest_cache

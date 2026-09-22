@@ -29,6 +29,8 @@ Copy the example environment file, set SMTP credentials, and start the service:
     cp .env.example .env
     docker compose up -d --build
 
+Set BOOKRELAY_PAIRING_ADMIN_KEY to a long random secret; pairing is disabled when it is empty. Keep BOOKRELAY_DELIVERY_ENABLED=false until SMTP is configured. Enter the owner key only on the HTTPS pairing page.
+
 The relay listens on port 8000 by default. Put it behind HTTPS before using it from a Kindle. A reverse proxy such as Caddy or nginx should terminate TLS and limit access to the pairing page and API as appropriate.
 
 SQLite is the default database. The container stores it in the relay-data volume. A PostgreSQL adapter is intentionally left for a later scale-out change.

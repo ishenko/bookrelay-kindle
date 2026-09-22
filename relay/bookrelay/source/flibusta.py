@@ -48,7 +48,10 @@ class FlibustaSource:
     def _get(self, path: str) -> bytes:
         request = Request(urljoin(self.base_url + "/", path.lstrip("/")), headers={"User-Agent": "BookRelay/0.1"})
         with urlopen(request, timeout=self.timeout) as response:
-            return response.read()
+            payload = response.read(25 * 1024 * 1024 + 1)
+            if len(payload) > 25 * 1024 * 1024:
+                raise ValueError("source response exceeds 25 MiB")
+            return payload
 
     def search(self, query: str, page: int = 1) -> list[Book]:
         suffix = f"/booksearch?ask={quote_plus(query)}&page={page}"

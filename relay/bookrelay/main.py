@@ -1,4 +1,5 @@
 import os
+import secrets
 from pathlib import Path
 
 from collections import defaultdict, deque
@@ -21,6 +22,7 @@ class PairStartRequest(BaseModel):
 class PairClaimRequest(BaseModel):
     code: str = Field(min_length=4, max_length=32)
     kindle_email: str = Field(min_length=5, max_length=254)
+    admin_key: str = Field(default="", max_length=256)
 
 
 class DeliveryRequest(BaseModel):
@@ -33,7 +35,7 @@ PAIRING_PAGE = """<!doctype html>
 <style>body{font:16px system-ui;max-width:34rem;margin:3rem auto;padding:0 1rem}label{display:block;margin:.8rem 0 .25rem}input,button{font:inherit;padding:.6rem;width:100%;box-sizing:border-box}button{margin-top:1rem}</style>
 <h1>BookRelay pairing</h1>
 <p>Enter the one-time code shown on your Kindle and its Send to Kindle email address.</p>
-<form id='pair'><label>Pairing code<input name='code' required autocomplete='off'></label><label>Kindle email<input name='kindle_email' type='email' required></label><button>Pair device</button></form><p id='result'></p>
+<form id='pair'><label>Pairing code<input name='code' required autocomplete='off'></label><label>Kindle email<input name='kindle_email' type='email' required></label><label>Owner key (Dokploy Environment)<input name='admin_key' type='password' required autocomplete='off'></label><button>Pair device</button></form><p id='result'></p>
 <script>document.querySelector('#pair').addEventListener('submit',async e=>{e.preventDefault();const body=Object.fromEntries(new FormData(e.target));const r=await fetch('/v1/pair/claim',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});document.querySelector('#result').textContent=r.ok?'Device paired. Return to Kindle.':(await r.json()).detail||'Pairing failed';});</script>
 </html>"""
 
@@ -59,7 +61,10 @@ class RateLimiter:
         return True
 
 
-def create_app(db_path: Path | str | None = None, source=None, mailer=None) -> FastAPI:
+def create_app(db_path: Path | str | None = None, source=None, mailer=None, pairing_admin_key: str | None = None, delivery_enabled: bool | None = None) -> FastAPI:
+    admin_key = pairing_admin_key if pairing_admin_key is not None else os.getenv("BOOKRELAY_PAIRING_ADMIN_KEY", "")
+    if delivery_enabled is None:
+        delivery_enabled = os.getenv("BOOKRELAY_DELIVERY_ENABLED", "false").lower() == "true"
     root = Path(db_path or os.getenv("BOOKRELAY_DB", "./data/relay.sqlite3"))
     source = source or FlibustaSource(os.getenv("BOOKRELAY_SOURCE_URL", "https://flibusta.is"))
     if mailer is None:
@@ -94,7 +99,7 @@ def create_app(db_path: Path | str | None = None, source=None, mailer=None) -> F
 
     @app.get("/healthz")
     def healthz():
-        return {"status": "ok"}
+        return {"status": "ok", "delivery_enabled": delivery_enabled, "pairing_enabled": bool(admin_key)}
 
     @app.get("/pair", response_class=HTMLResponse)
     def pairing_page():
@@ -126,6 +131,10 @@ def create_app(db_path: Path | str | None = None, source=None, mailer=None) -> F
     @app.post("/v1/pair/claim")
     def pair_claim(request: Request, payload: PairClaimRequest):
         limit(request, "pair-claim", 10, 600)
+        if not admin_key:
+            raise HTTPException(status_code=503, detail="pairing is not configured")
+        if not secrets.compare_digest(payload.admin_key.encode(), admin_key.encode()):
+            raise HTTPException(status_code=403, detail="owner key required")
         try:
             return pairing.claim(payload.code, payload.kindle_email)
         except ValueError as exc:
@@ -143,6 +152,8 @@ def create_app(db_path: Path | str | None = None, source=None, mailer=None) -> F
     def create_delivery(request: Request, payload: DeliveryRequest, background: BackgroundTasks, authorization: str | None = Header(default=None)):
         limit(request, "delivery", 20, 3600)
         device = require_device(authorization)
+        if not delivery_enabled:
+            raise HTTPException(status_code=503, detail="delivery is disabled until SMTP is configured")
         title = payload.title or source.details(payload.book_id).title
         job = delivery.enqueue(payload.book_id, device["kindle_email"], title)
         background.add_task(delivery.run, job["id"])

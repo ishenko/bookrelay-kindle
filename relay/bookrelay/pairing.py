@@ -65,6 +65,7 @@ class PairingStore:
         now = utc_now()
         token = secrets.token_urlsafe(32)
         with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
             row = conn.execute("SELECT * FROM pairings WHERE code = ?", (code.upper(),)).fetchone()
             if not row:
                 raise ValueError("pairing code not found")
@@ -87,6 +88,8 @@ class PairingStore:
             row = conn.execute("SELECT * FROM pairings WHERE code = ?", (code.upper(),)).fetchone()
         if not row:
             return {"status": "not_found"}
+        if datetime.fromisoformat(row["expires_at"]) <= utc_now():
+            return {"status": "expired"}
         if row["claimed_at"]:
             return {
                 "status": "claimed",
@@ -94,8 +97,6 @@ class PairingStore:
                 "kindle_email": row["kindle_email"],
                 "token": row["token"],
             }
-        if datetime.fromisoformat(row["expires_at"]) <= utc_now():
-            return {"status": "expired"}
         return {"status": "pending", "expires_at": row["expires_at"]}
 
     def authenticate(self, token: str):

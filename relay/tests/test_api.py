@@ -44,12 +44,12 @@ class FakeMailer:
 class ApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_pair_search_and_authenticated_delivery(self):
         with tempfile.TemporaryDirectory() as tmp:
-            app = create_app(Path(tmp) / "relay.sqlite3", source=FakeSource(), mailer=FakeMailer())
+            app = create_app(Path(tmp) / "relay.sqlite3", source=FakeSource(), mailer=FakeMailer(), pairing_admin_key="test-owner-key", delivery_enabled=True)
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
                 start = await client.post("/v1/pair/start", json={"device_id": "pw12"})
                 self.assertEqual(start.status_code, 200)
                 code = start.json()["code"]
-                claimed = await client.post("/v1/pair/claim", json={"code": code, "kindle_email": "reader@kindle.com"})
+                claimed = await client.post("/v1/pair/claim", json={"code": code, "kindle_email": "reader@kindle.com", "admin_key": "test-owner-key"})
                 self.assertEqual(claimed.status_code, 200)
                 token = (await client.get(f"/v1/pair/status/{code}")).json()["token"]
                 auth = {"Authorization": f"Bearer {token}"}

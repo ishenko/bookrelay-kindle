@@ -272,6 +272,15 @@ int main(int argc, char **argv) {
             g_error("native search entry did not receive keyboard focus");
         search_keyboard = g_object_get_data(G_OBJECT(app.keyboard), "bookrelay-keyboard-state");
         if (!search_keyboard->native_open) g_error("native search did not open the Kindle keyboard");
+        {
+            GdkEventFocus transient_focus = {0};
+            gboolean handled = FALSE;
+            transient_focus.type = GDK_FOCUS_CHANGE;
+            transient_focus.in = FALSE;
+            g_signal_emit_by_name(app.query, "focus-out-event", &transient_focus, &handled);
+            if (!search_keyboard->native_open)
+                g_error("transient focus loss closed the Kindle search keyboard");
+        }
         if (!gdk_test_simulate_key(app.query->window, 12, 12, GDK_a, 0, GDK_KEY_PRESS) ||
             !gdk_test_simulate_key(app.query->window, 12, 12, GDK_a, 0, GDK_KEY_RELEASE))
             g_error("could not simulate native keyboard input");

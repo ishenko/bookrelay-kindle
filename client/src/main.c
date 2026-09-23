@@ -256,7 +256,12 @@ static gboolean virtual_keyboard_button_press(GtkWidget *widget, GdkEventButton 
 }
 
 static gboolean virtual_keyboard_focus_out(GtkWidget *widget, GdkEventFocus *event, gpointer userdata) {
-    virtual_keyboard_hide(userdata);
+    VirtualKeyboard *keyboard = userdata;
+    /* The Kindle keyboard can temporarily take X focus while it is accepting
+     * input. Closing it here interrupts the search entry before the first
+     * character arrives. Enter, a background tap, and page changes still
+     * close it explicitly. */
+    if (!keyboard->native_open) virtual_keyboard_hide(keyboard);
     return FALSE;
 }
 

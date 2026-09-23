@@ -391,6 +391,11 @@ gchar *bookrelay_api_delivery_status(const gchar *base_url, const gchar *token, 
     long status;
     gchar *body = request("GET", url, token, NULL, &status, error);
     gchar *state = body ? json_string(body, "status") : NULL;
+    if (body && g_strcmp0(state, "failed") == 0) {
+        gchar *detail = json_string(body, "error");
+        if (detail && *detail) g_set_error(error, API_ERROR, 5, "%.*s", 180, detail);
+        g_free(detail);
+    }
     g_free(path); g_free(url); g_free(body);
     return state;
 }

@@ -1857,8 +1857,12 @@ static gboolean async_task_complete(gpointer userdata) {
                 poll->attempts++;
                 if (!task->state && poll->attempts < 20) break;
                 if (!task->state) delivery_progress(app, "Не удалось получить статус доставки. Проверьте relay.");
-                else if (g_strcmp0(task->state, "sent") == 0) delivery_progress(app, "EPUB передан почтовому серверу. Доставку на Kindle подтвердит Amazon.");
-                else if (g_strcmp0(task->state, "failed") == 0) delivery_progress(app, "Relay не смог отправить EPUB. Проверьте задание на сервере.");
+                else if (g_strcmp0(task->state, "sent") == 0) delivery_progress(app, "EPUB принят почтовым сервером. Если книга не появилась на Kindle, проверьте разрешённый адрес отправителя в Amazon и почту Kindle в настройках.");
+                else if (g_strcmp0(task->state, "failed") == 0) {
+                    gchar *message = g_strdup_printf("Не удалось отправить EPUB: %s", task->error ? task->error->message : "проверьте задание на сервере");
+                    delivery_progress(app, message);
+                    g_free(message);
+                }
                 else if (poll->attempts < 20) {
                     delivery_progress(app, g_strcmp0(task->state, "sending") == 0 ? "EPUB отправляется…" : "Книга скачивается…");
                     break;
@@ -1916,14 +1920,11 @@ static void search_icon_clicked(GtkButton *button, gpointer userdata) {
     update_pager(app);
     gtk_widget_hide(app->header_title);
     gtk_widget_show(app->search_row);
-    /* Unlike the setup form, this entry was hidden until the search icon was
-     * released. Map and focus it before asking Kindle to open its keyboard;
-     * otherwise Kindle can bind input to the previously focused widget. */
-    gtk_widget_grab_focus(app->query);
+    /* The entry must be mapped before opening the keyboard. Once it is
+     * mapped, use the same open-then-focus order as the working setup form. */
     virtual_keyboard_show_for(g_object_get_data(G_OBJECT(app->keyboard),
                                                 "bookrelay-keyboard-state"),
                               GTK_ENTRY(app->query));
-    /* The native keyboard can briefly take X focus while opening. */
     gtk_window_set_focus(GTK_WINDOW(app->window), app->query);
     g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, focus_widget_idle,
                     g_object_ref(app->query), g_object_unref);

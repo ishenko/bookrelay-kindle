@@ -669,8 +669,8 @@ static GtkWidget *book_placeholder(BookRelayBook *book, gint width, gint height)
     GtkWidget *title;
     GtkWidget *author;
     GtkWidget *year;
-    gchar *title_text = list_excerpt(book->title && *book->title ? book->title : "Без названия", width < 150 ? 58 : 95);
-    gchar *author_text = list_excerpt(book->author && *book->author ? book->author : "Автор не указан", width < 150 ? 36 : 55);
+    gchar *title_text = list_excerpt(book->title && *book->title ? book->title : "Без названия", width < 150 ? 28 : 52);
+    gchar *author_text = list_excerpt(book->author && *book->author ? book->author : "Автор не указан", width < 150 ? 17 : 28);
     gchar *year_text = book->year ? g_strdup_printf("%d", book->year) : g_strdup("Год не указан");
     title = gtk_label_new(title_text);
     author = gtk_label_new(author_text);
@@ -689,9 +689,9 @@ static GtkWidget *book_placeholder(BookRelayBook *book, gint width, gint height)
     gtk_misc_set_alignment(GTK_MISC(title), 0, 0);
     gtk_misc_set_alignment(GTK_MISC(author), 0, 1);
     gtk_misc_set_alignment(GTK_MISC(year), 0, 1);
-    set_large_font(title, width < 150 ? "Sans Bold 12" : "Sans Bold 18");
-    set_large_font(author, width < 150 ? "Sans 10" : "Sans 13");
-    set_large_font(year, width < 150 ? "Sans 10" : "Sans 13");
+    set_large_font(title, width < 150 ? "Sans Bold 10" : "Sans Bold 16");
+    set_large_font(author, width < 150 ? "Sans 9" : "Sans 12");
+    set_large_font(year, width < 150 ? "Sans 9" : "Sans 12");
     gtk_box_pack_start(GTK_BOX(content), title, FALSE, FALSE, 0);
     gtk_box_pack_end(GTK_BOX(content), year, FALSE, FALSE, 0);
     gtk_box_pack_end(GTK_BOX(content), author, FALSE, FALSE, 0);
@@ -853,9 +853,22 @@ static GtkWidget *asset_cover(const gchar *key, const gchar *title, gint width) 
     gchar *filename = g_strconcat(hash, ".jpg", NULL);
     gchar *path = g_build_filename(asset_dir && *asset_dir ? asset_dir : "client/share/covers", filename, NULL);
     GdkPixbuf *pixbuf = gdk_pixbuf_new_from_file_at_scale(path, width, width * 3 / 2, TRUE, NULL);
-    GtkWidget *image = pixbuf ? gtk_image_new_from_pixbuf(pixbuf) : gtk_label_new(title);
-    if (!pixbuf) set_large_font(image, "Sans Bold 20");
-    else g_object_unref(pixbuf);
+    GtkWidget *image;
+    if (pixbuf) {
+        image = gtk_image_new_from_pixbuf(pixbuf);
+        g_object_unref(pixbuf);
+    } else {
+        GtkWidget *label = gtk_label_new(title);
+        GtkWidget *background = gtk_event_box_new();
+        gtk_label_set_line_wrap(GTK_LABEL(label), TRUE);
+        gtk_label_set_line_wrap_mode(GTK_LABEL(label), PANGO_WRAP_WORD_CHAR);
+        gtk_widget_set_size_request(label, width - 20, -1);
+        gtk_widget_set_size_request(background, width, width * 3 / 2);
+        gtk_container_add(GTK_CONTAINER(background), label);
+        ink_background(background, "#efefec");
+        set_large_font(label, width < 150 ? "Sans Bold 12" : "Sans Bold 18");
+        image = background;
+    }
     g_free(path); g_free(filename); g_free(hash);
     return image;
 }

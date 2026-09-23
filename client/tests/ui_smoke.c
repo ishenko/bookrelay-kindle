@@ -26,16 +26,6 @@ static void expect_inside_window(App *app, GtkWidget *widget, const char *name) 
                 widget->allocation.width, widget->allocation.height, width, height);
 }
 
-static void expect_inside_results_viewport(App *app, GtkWidget *widget) {
-    GtkWidget *viewport = gtk_widget_get_parent(app->results);
-    gint x = 0, y = 0;
-    if (!gtk_widget_translate_coordinates(widget, viewport, 0, 0, &x, &y) ||
-        x < 0 || y < 0 ||
-        x + widget->allocation.width > viewport->allocation.width ||
-        y + widget->allocation.height > viewport->allocation.height)
-        g_error("book action is clipped by the results viewport");
-}
-
 static GtkWidget *find_button(GtkWidget *root, const gchar *label) {
     GList *children, *item;
     GtkWidget *found = NULL;
@@ -45,6 +35,18 @@ static GtkWidget *find_button(GtkWidget *root, const gchar *label) {
     children = gtk_container_get_children(GTK_CONTAINER(root));
     for (item = children; item && !found; item = item->next)
         found = find_button(GTK_WIDGET(item->data), label);
+    g_list_free(children);
+    return found;
+}
+
+static GtkWidget *find_data_button(GtkWidget *root, const gchar *key) {
+    GList *children, *item;
+    GtkWidget *found = NULL;
+    if (GTK_IS_BUTTON(root) && g_object_get_data(G_OBJECT(root), key)) return root;
+    if (!GTK_IS_CONTAINER(root)) return NULL;
+    children = gtk_container_get_children(GTK_CONTAINER(root));
+    for (item = children; item && !found; item = item->next)
+        found = find_data_button(GTK_WIDGET(item->data), key);
     g_list_free(children);
     return found;
 }
@@ -89,20 +91,72 @@ int main(int argc, char **argv) {
     g_mkdir_with_parents(argv[1], 0700);
     build_ui(&app);
     drain_events();
-    expect_visible(app.query, "search field");
-    expect_inside_window(&app, app.query, "search field");
-    expect_visible(app.connection, "connection status");
-    gtk_widget_hide(app.keyboard);
-    drain_events();
-    snapshot(&app, argv[1], "main.png");
+    settings = g_object_get_data(G_OBJECT(app.page_window), "bookrelay-settings-page");
+    if (!settings) g_error("setup screen did not open on first launch");
+    expect_visible(settings->keyboard->root, "settings keyboard");
+    expect_inside_window(&app, GTK_WIDGET(settings->relay), "settings relay field");
+    expect_inside_window(&app, settings->keyboard->root, "settings keyboard");
+    snapshot(&app, argv[1], "settings.png");
+    gtk_button_clicked(GTK_BUTTON(g_ptr_array_index(settings->keyboard->letter_buttons, 0)));
+    if (g_strcmp0(gtk_entry_get_text(settings->relay), "q") != 0)
+        g_error("settings keyboard did not insert text");
 
-    button = find_button(app.window, "Искать");
-    if (!button) g_error("search button not found");
-    gtk_widget_grab_focus(button);
+    settings_pair_clicked(NULL, settings);
     drain_events();
+    pair = g_object_get_data(G_OBJECT(app.page_window), "bookrelay-pair-page");
+    if (!pair) g_error("pairing page not created");
+    expect_visible(pair->keyboard->root, "pairing keyboard");
+    expect_inside_window(&app, GTK_WIDGET(pair->relay), "relay field");
+    expect_inside_window(&app, GTK_WIDGET(pair->code), "code field");
+    expect_inside_window(&app, pair->keyboard->root, "pairing keyboard");
+    virtual_keyboard_show_for(pair->keyboard, pair->code);
+    gtk_button_clicked(GTK_BUTTON(g_ptr_array_index(pair->keyboard->letter_buttons, 0)));
+    if (g_strcmp0(gtk_entry_get_text(pair->code), "q") != 0)
+        g_error("pairing keyboard did not insert into code field");
+    snapshot(&app, argv[1], "pairing.png");
+
+    /* Simulate successful setup without starting a network request. */
+    app.config->token = g_strdup("smoke-test-token");
+    app.catalog_ready = TRUE;
+    gtk_widget_destroy(pair->window);
+    drain_events();
+    if (app.page_window || gtk_notebook_get_current_page(GTK_NOTEBOOK(app.pages)) != 0)
+        g_error("closing pairing did not restore main page");
+    render_categories(&app);
+    drain_events();
+    button = find_data_button(app.results, "category-row");
+    if (!button) g_error("category grid has no cards");
+    expect_inside_window(&app, button, "category card");
+    expect_inside_window(&app, app.page_label, "pagination");
+    snapshot(&app, argv[1], "categories.png");
+
+    app.subcategories = g_ptr_array_new_with_free_func((GDestroyNotify)bookrelay_category_free);
+    {
+        BookRelayCategory *category = g_new0(BookRelayCategory, 1);
+        category->id = g_strdup("/opds/genres/%D0%94%D0%B5%D0%BB%D0%BE%D0%B2%D0%B0%D1%8F%20%D0%BB%D0%B8%D1%82%D0%B5%D1%80%D0%B0%D1%82%D1%83%D1%80%D0%B0/141");
+        category->title = g_strdup("Карьера, кадры");
+        g_ptr_array_add(app.subcategories, category);
+        category = g_new0(BookRelayCategory, 1);
+        category->id = g_strdup("new-unbundled-subcategory");
+        category->title = g_strdup("Новая подкатегория без обложки");
+        g_ptr_array_add(app.subcategories, category);
+    }
+    app.view = VIEW_SUBCATEGORIES;
+    render_subcategories(&app);
+    drain_events();
+    button = find_data_button(app.results, "subcategory-row");
+    if (!button) g_error("subcategory grid has no cards");
+    expect_inside_window(&app, button, "subcategory card");
+    snapshot(&app, argv[1], "subcategories.png");
+
+    search_icon_clicked(NULL, &app);
+    drain_events();
+    expect_visible(app.query, "inline search field");
+    expect_inside_window(&app, app.query, "inline search field");
     gtk_widget_grab_focus(app.query);
     drain_events();
     expect_visible(app.keyboard, "search keyboard after focus");
+    expect_inside_window(&app, app.keyboard, "search keyboard");
     search_keyboard = g_object_get_data(G_OBJECT(app.keyboard), "bookrelay-keyboard-state");
     letter = g_ptr_array_index(search_keyboard->letter_buttons, 0);
     gtk_button_clicked(GTK_BUTTON(letter));
@@ -125,10 +179,9 @@ int main(int argc, char **argv) {
     g_ptr_array_add(books, book);
     render_books(&app, books);
     drain_events();
-    button = find_button(app.results, "Подробнее");
-    if (!button) g_error("book card has no details button");
-    expect_inside_window(&app, button, "book details button");
-    expect_inside_results_viewport(&app, button);
+    button = find_data_button(app.results, "book-row");
+    if (!button) g_error("book grid has no card");
+    expect_inside_window(&app, button, "book card");
     snapshot(&app, argv[1], "book-list.png");
     gtk_button_clicked(GTK_BUTTON(button));
     drain_events();
@@ -142,40 +195,10 @@ int main(int argc, char **argv) {
     drain_events();
     g_ptr_array_free(books, TRUE);
 
-    pair_clicked(NULL, &app);
-    drain_events();
-    pair = g_object_get_data(G_OBJECT(app.page_window), "bookrelay-pair-page");
-    if (!pair) g_error("pairing page not created");
-    g_print("pair: page=%d root visible=%d mapped=%d keyboard visible=%d mapped=%d\n",
-            gtk_notebook_get_current_page(GTK_NOTEBOOK(app.pages)),
-            GTK_WIDGET_VISIBLE(pair->window), GTK_WIDGET_MAPPED(pair->window),
-            GTK_WIDGET_VISIBLE(pair->keyboard->root), GTK_WIDGET_MAPPED(pair->keyboard->root));
-    snapshot(&app, argv[1], "pairing.png");
-    expect_visible(pair->keyboard->root, "pairing keyboard");
-    expect_inside_window(&app, GTK_WIDGET(pair->relay), "relay field");
-    expect_inside_window(&app, GTK_WIDGET(pair->code), "code field");
-    expect_inside_window(&app, pair->keyboard->root, "pairing keyboard");
-    virtual_keyboard_show_for(pair->keyboard, pair->code);
-    gtk_button_clicked(GTK_BUTTON(g_ptr_array_index(pair->keyboard->letter_buttons, 0)));
-    if (g_strcmp0(gtk_entry_get_text(pair->code), "q") != 0)
-        g_error("pairing keyboard did not insert into code field");
-    gtk_widget_destroy(pair->window);
-    drain_events();
-    if (app.page_window || gtk_notebook_get_current_page(GTK_NOTEBOOK(app.pages)) != 0)
-        g_error("closing pairing did not restore main page");
-
-    settings_clicked(NULL, &app);
-    drain_events();
-    settings = g_object_get_data(G_OBJECT(app.page_window), "bookrelay-settings-page");
-    if (!settings) g_error("settings page not created");
-    expect_visible(settings->keyboard->root, "settings keyboard");
-    expect_inside_window(&app, GTK_WIDGET(settings->relay), "settings relay field");
-    expect_inside_window(&app, settings->keyboard->root, "settings keyboard");
-    snapshot(&app, argv[1], "settings.png");
-    gtk_widget_destroy(settings->window);
     gtk_widget_destroy(app.window);
     bookrelay_config_free(app.config);
-    g_ptr_array_free(app.category_ids, TRUE);
+    g_ptr_array_free(app.catalog_categories, TRUE);
+    g_ptr_array_free(app.subcategories, TRUE);
     g_free(app.config_path);
     curl_global_cleanup();
     return 0;

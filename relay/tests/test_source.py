@@ -113,6 +113,15 @@ class FlibustaParserTests(unittest.TestCase):
                          [('123', 'A Book', 'A Writer', 2022, 'https://flibusta.is/covers/123.jpg')])
         self.assertTrue(has_next)
 
+    def test_opds_standard_thumbnail_is_kept_for_book_cards(self):
+        feed = b'''<feed xmlns="http://www.w3.org/2005/Atom">
+          <entry><title>Book with cover</title>
+            <link rel="http://opds-spec.org/acquisition/open-access" href="/b/451198/epub" />
+            <link rel="http://opds-spec.org/image/thumbnail" href="/i/98/451198/cover.jpg" />
+          </entry></feed>'''
+        _, books, _ = parse_opds_feed(feed, 'https://flibusta.is')
+        self.assertEqual(books[0].cover_url, 'https://flibusta.is/i/98/451198/cover.jpg')
+
     def test_opds_paging_follows_next_and_stops_at_last_page(self):
         class StubSource(FlibustaSource):
             def __init__(self):

@@ -1944,6 +1944,22 @@ static gboolean search_icon_released(GtkWidget *widget, GdkEventButton *event, g
     return TRUE;
 }
 
+static gboolean search_window_key_press(GtkWidget *widget, GdkEventKey *event, gpointer userdata) {
+    App *app = userdata;
+    gint cursor;
+    /* The Kindle keyboard sometimes restores focus to the application window
+     * after opening. Keep its keystrokes attached to the visible search field. */
+    if (app->page_window || app->view != VIEW_SEARCH ||
+        !GTK_WIDGET_MAPPED(app->query) ||
+        gtk_window_get_focus(GTK_WINDOW(widget)) == app->query)
+        return FALSE;
+    cursor = gtk_editable_get_position(GTK_EDITABLE(app->query));
+    gtk_widget_grab_focus(app->query);
+    gtk_editable_select_region(GTK_EDITABLE(app->query), cursor, cursor);
+    /* Let GtkWindow propagate this same key event to its newly focused entry. */
+    return FALSE;
+}
+
 static gboolean favorites_icon_pressed(GtkWidget *widget, GdkEventButton *event, gpointer userdata) {
     if (event->button == 1 && ((App *)userdata)->catalog_ready) favorites_clicked(NULL, userdata);
     return TRUE;
@@ -2116,6 +2132,7 @@ static void build_ui(App *app) {
     g_signal_connect(app->next_page, "clicked", G_CALLBACK(next_page_clicked), app);
     g_signal_connect(app->last_page, "clicked", G_CALLBACK(last_page_clicked), app);
     g_signal_connect(app->window, "delete-event", G_CALLBACK(delete_event), app);
+    g_signal_connect(app->window, "key-press-event", G_CALLBACK(search_window_key_press), app);
     gtk_widget_add_events(app->window, GDK_BUTTON_PRESS_MASK);
     g_signal_connect(app->window, "button-press-event", G_CALLBACK(virtual_keyboard_background_press), app);
     gtk_widget_show_all(app->window);

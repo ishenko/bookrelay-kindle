@@ -287,6 +287,15 @@ int main(int argc, char **argv) {
         drain_events();
         if (g_strcmp0(gtk_entry_get_text(GTK_ENTRY(app.query)), "a") != 0)
             g_error("native keyboard input was not entered into search");
+        /* The Kindle input overlay can leave focus on the application window.
+         * A key delivered there must still reach the inline search entry. */
+        gtk_window_set_focus(GTK_WINDOW(app.window), NULL);
+        if (!gdk_test_simulate_key(app.window->window, 12, 12, GDK_b, 0, GDK_KEY_PRESS) ||
+            !gdk_test_simulate_key(app.window->window, 12, 12, GDK_b, 0, GDK_KEY_RELEASE))
+            g_error("could not simulate key with lost search focus");
+        drain_events();
+        if (g_strcmp0(gtk_entry_get_text(GTK_ENTRY(app.query)), "ab") != 0)
+            g_error("search did not recover from lost keyboard focus: text=%s focus=%p expected=%p", gtk_entry_get_text(GTK_ENTRY(app.query)), gtk_window_get_focus(GTK_WINDOW(app.window)), app.query);
         snapshot(&app, argv[1], "search-native.png");
         gtk_widget_destroy(app.window);
         bookrelay_config_free(app.config);

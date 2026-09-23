@@ -23,10 +23,12 @@ def main(binary: str, output: str) -> None:
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             nonlocal active, peak
+            stress_request = self.path != EXPECTED_PATH
             with lock:
                 requests.append((self.path, self.headers.get("Authorization")))
-                active += 1
-                peak = max(peak, active)
+                if stress_request:
+                    active += 1
+                    peak = max(peak, active)
             if self.path != EXPECTED_PATH and not any(
                 self.path == f"/v1/books/{i}/cover?path=%2Fi%2F98%2F{i}%2Fcover.jpg"
                 for i in range(1000, 1012)
@@ -40,7 +42,8 @@ def main(binary: str, output: str) -> None:
                 self.end_headers()
                 self.wfile.write(jpeg)
             with lock:
-                active -= 1
+                if stress_request:
+                    active -= 1
 
         def log_message(self, *_args):
             pass

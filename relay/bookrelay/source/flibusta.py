@@ -57,7 +57,7 @@ def parse_book_entry(entry: ET.Element, base_url: str) -> Book | None:
     match = re.search(r"/b/([0-9]+)", acquisition.get("href", ""))
     if not match:
         return None
-    cover = next((link.get("href", "") for link in links if link.get("rel") in ("http://opds-spec.org/thumbnail", "http://opds-spec.org/image")), "")
+    cover = next((link.get("href", "") for link in links if link.get("rel") in ("http://opds-spec.org/image/thumbnail", "http://opds-spec.org/image", "http://opds-spec.org/thumbnail")), "")
     issued = entry.findtext(f"{DC}issued") or ""
     content = entry.findtext(f"{ATOM}content") or ""
     return Book(id=match.group(1), title=(entry.findtext(f"{ATOM}title") or "").strip(),

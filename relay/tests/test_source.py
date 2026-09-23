@@ -1,9 +1,25 @@
 import unittest
+from unittest.mock import patch
 
 from bookrelay.source.flibusta import FlibustaSource, SourceUnavailable, parse_opds_feed, parse_search_page
 
 
 class FlibustaParserTests(unittest.TestCase):
+    def test_oversized_source_response_is_reported_as_unavailable(self):
+        class OversizedResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self, limit):
+                return b"x" * limit
+
+        with patch("bookrelay.source.flibusta.urlopen", return_value=OversizedResponse()):
+            with self.assertRaisesRegex(SourceUnavailable, "exceeds 25 MiB"):
+                FlibustaSource().categories()
+
     def test_catalog_uses_stale_cached_feed_during_source_outage(self):
         class StubSource(FlibustaSource):
             def __init__(self):

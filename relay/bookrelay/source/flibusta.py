@@ -103,7 +103,7 @@ class FlibustaSource:
             with urlopen(request, timeout=self.timeout) as response:
                 payload = response.read(25 * 1024 * 1024 + 1)
                 if len(payload) > 25 * 1024 * 1024:
-                    raise ValueError("source response exceeds 25 MiB")
+                    raise SourceUnavailable("Flibusta response exceeds 25 MiB")
                 return payload
         except (HTTPError, URLError, OSError, TimeoutError) as exc:
             raise SourceUnavailable("Flibusta did not respond; please retry") from exc

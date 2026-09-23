@@ -236,6 +236,10 @@ int main(int argc, char **argv) {
             g_error("code Enter did not invoke connection validation");
         gtk_widget_destroy(settings->window);
         app.catalog_ready = TRUE;
+        search_keyboard = g_object_get_data(G_OBJECT(app.keyboard), "bookrelay-keyboard-state");
+        /* Opening from focus-in is too late for the device keyboard: check
+         * the toolbar path independently of that fallback handler. */
+        g_signal_handlers_block_by_func(app.query, virtual_keyboard_focus_in, search_keyboard);
         /* A real click bubbles to the window's background-tap handler. */
         if (!gdk_test_simulate_button(app.search_icon->window,
                                       app.search_icon->allocation.x + app.search_icon->allocation.width / 2,

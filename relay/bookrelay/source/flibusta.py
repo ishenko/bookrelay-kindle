@@ -1,7 +1,10 @@
 import html
 import re
+from collections import OrderedDict
+from threading import Lock
+from time import monotonic
 from xml.etree import ElementTree as ET
-from urllib.parse import quote_plus, urljoin
+from urllib.parse import quote_plus, urljoin, urlsplit
 from urllib.request import Request, urlopen
 
 from ..delivery import validate_epub
@@ -75,6 +78,9 @@ class FlibustaSource:
     def __init__(self, base_url: str = "https://flibusta.is", timeout: int = 20):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self._feed_cache: OrderedDict[str, tuple[float, bytes]] = OrderedDict()
+        self._feed_cache_bytes = 0
+        self._feed_cache_lock = Lock()
 
     def _get(self, path: str) -> bytes:
         request = Request(urljoin(self.base_url + "/", path.lstrip("/")), headers={"User-Agent": "BookRelay/0.1"})
@@ -91,16 +97,36 @@ class FlibustaSource:
         suffix = f"/opds/search?searchTerm={quote_plus(query.strip())}"
         return self._paged_books(suffix, page, size)
 
-    def _paged_books(self, path: str, page: int, size: int = 6) -> tuple[list[Book], bool]:
+    def _catalog_feed(self, path: str) -> bytes:
+        now = monotonic()
+        with self._feed_cache_lock:
+            cached = self._feed_cache.get(path)
+            if cached and now - cached[0] < 300:
+                self._feed_cache.move_to_end(path)
+                return cached[1]
+        payload = self._get(path)
+        if len(payload) <= 512 * 1024:
+            with self._feed_cache_lock:
+                old = self._feed_cache.pop(path, None)
+                if old:
+                    self._feed_cache_bytes -= len(old[1])
+                self._feed_cache[path] = (monotonic(), payload)
+                self._feed_cache_bytes += len(payload)
+                while len(self._feed_cache) > 64 or self._feed_cache_bytes > 8 * 1024 * 1024:
+                    _, (_, removed) = self._feed_cache.popitem(last=False)
+                    self._feed_cache_bytes -= len(removed)
+        return payload
+
+    def _paged_books(self, path: str, page: int, size: int = 6, cache: bool = False) -> tuple[list[Book], bool]:
         start = (page - 1) * size
-        target = start + size + 1
+        target = start + size
         books_seen: list[Book] = []
         visited: set[str] = set()
         while path and len(books_seen) < target:
             if path in visited:
                 raise ValueError("cyclic OPDS pagination")
             visited.add(path)
-            payload = self._get(path)
+            payload = self._catalog_feed(path) if cache else self._get(path)
             root = ET.fromstring(payload)
             next_link = next((link.get("href") for link in root.findall(f"{ATOM}link") if link.get("rel") == "next"), None)
             _, books, _ = parse_opds_feed(payload, self.base_url)
@@ -113,15 +139,31 @@ class FlibustaSource:
         return sections
 
     def subcategories(self, category: str) -> list[dict[str, str]]:
-        if category not in {item["id"] for item in self.categories()}:
+        if not re.fullmatch(r"/opds/genres/[^/?#]+", category):
             raise ValueError("unknown category")
         sections, _, _ = parse_opds_feed(self._get(category), self.base_url)
         return sections
 
     def catalog_books(self, category: str, subcategory: str, page: int = 1, size: int = 6) -> tuple[list[Book], bool]:
-        if subcategory not in {item["id"] for item in self.subcategories(category)}:
+        if not re.fullmatch(r"/opds/genres/[^/?#]+", category) or not re.fullmatch(re.escape(category) + r"/[^/?#]+", subcategory):
             raise ValueError("unknown subcategory")
-        return self._paged_books(subcategory, page, size)
+        return self._paged_books(subcategory, page, size, cache=True)
+
+    def cover_path(self, book_id: str, cover_url: str) -> str:
+        """Only cover paths tied to this book on the configured OPDS host may be fetched."""
+        origin, cover = urlsplit(self.base_url), urlsplit(cover_url)
+        if not re.fullmatch(r"[0-9]+", book_id) or (cover.scheme, cover.netloc) != (origin.scheme, origin.netloc):
+            raise ValueError("invalid cover URL")
+        if cover.query or cover.fragment or not re.fullmatch(rf"/i/[0-9]{{1,2}}/{re.escape(book_id)}/cover[.](?:jpe?g|png)", cover.path):
+            raise ValueError("invalid cover path")
+        return cover.path
+
+    def download_cover(self, book_id: str, path: str) -> bytes:
+        self.cover_path(book_id, urljoin(self.base_url + "/", path.lstrip("/")))
+        payload = self._get(path)
+        if len(payload) > 8 * 1024 * 1024 or not (payload.startswith(b"\xff\xd8\xff") or payload.startswith(b"\x89PNG\r\n\x1a\n")):
+            raise ValueError("invalid cover image")
+        return payload
 
     def details(self, book_id: str) -> Book:
         page = self._get(f"/b/{book_id}").decode("utf-8", "replace")

@@ -2,12 +2,13 @@ import json
 import os
 import secrets
 from pathlib import Path
+from urllib.parse import quote
 
 from collections import defaultdict, deque
 from time import monotonic
 
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from .delivery import SmtpMailer
@@ -190,6 +191,17 @@ def create_app(db_path: Path | str | None = None, source=None, mailer=None, pair
         if not limiter.allow(f"{scope}:{address}", count, window):
             raise HTTPException(status_code=429, detail="rate limit exceeded")
 
+    def serialize_book(book):
+        data = book.to_dict()
+        if isinstance(source, FlibustaSource) and book.cover_url:
+            try:
+                path = source.cover_path(book.id, book.cover_url)
+            except ValueError:
+                data["cover_url"] = ""
+            else:
+                data["cover_url"] = f"/v1/books/{book.id}/cover?path={quote(path, safe='')}"
+        return data
+
     @app.get("/healthz")
     def healthz():
         return {"status": "ok", "delivery_enabled": delivery_enabled, "pairing_enabled": bool(admin_key)}
@@ -229,7 +241,7 @@ def create_app(db_path: Path | str | None = None, source=None, mailer=None, pair
             books, has_next = source.catalog_books(category, subcategory, page, size)
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        return {"items": [book.to_dict() for book in books], "page": page, "has_next": has_next}
+        return {"items": [serialize_book(book) for book in books], "page": page, "has_next": has_next}
 
     @app.get("/v1/search")
     def search(request: Request, q: str = Query(default="", max_length=200), category: str | None = Query(default=None, max_length=64), page: int = Query(default=1, ge=1, le=100), size: int = Query(default=6, ge=4, le=12), authorization: str | None = Header(default=None)):
@@ -241,12 +253,25 @@ def create_app(db_path: Path | str | None = None, source=None, mailer=None, pair
             books, has_next = source.search_page(q, page, size)
         else:
             books, has_next = source.search(q, page, category), False
-        return {"items": [book.to_dict() for book in books], "page": page, "query": q, "category": category, "has_next": has_next}
+        return {"items": [serialize_book(book) for book in books], "page": page, "query": q, "category": category, "has_next": has_next}
+
+    @app.get("/v1/books/{book_id}/cover")
+    def book_cover(request: Request, book_id: str, path: str = Query(max_length=256), authorization: str | None = Header(default=None)):
+        limit(request, "book-cover", 120, 60)
+        require_device(authorization)
+        if not isinstance(source, FlibustaSource):
+            raise HTTPException(status_code=404, detail="cover unavailable")
+        try:
+            payload = source.download_cover(book_id, path)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return Response(content=payload, media_type="image/png" if path.endswith(".png") else "image/jpeg",
+                        headers={"Cache-Control": "private, max-age=86400"})
 
     @app.get("/v1/books/{book_id}")
     def book_details(book_id: str, authorization: str | None = Header(default=None)):
         require_device(authorization)
-        return source.details(book_id).to_dict()
+        return serialize_book(source.details(book_id))
 
     @app.post("/v1/pair/start")
     def pair_start(request: Request, payload: PairStartRequest):

@@ -11,6 +11,44 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class ApiHttpTests(unittest.TestCase):
+    def test_cover_download_uses_relay_and_device_token(self):
+        received = {}
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                received["path"] = self.path
+                received["authorization"] = self.headers.get("Authorization")
+                payload = b"JPEG"
+                self.send_response(200)
+                self.send_header("Content-Type", "image/jpeg")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def log_message(self, *_args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            flags = subprocess.check_output(["pkg-config", "--cflags", "--libs", "glib-2.0", "libcurl"], text=True).split()
+            with tempfile.TemporaryDirectory() as temporary:
+                binary = Path(temporary) / "api-http-smoke"
+                subprocess.run(["cc", "-std=c11", str(ROOT / "client/tests/api_http_smoke.c"),
+                                str(ROOT / "client/src/api.c"), "-o", str(binary), *flags],
+                               check=True, capture_output=True, text=True)
+                subprocess.run([str(binary), f"http://127.0.0.1:{server.server_port}", "cover"],
+                               check=True, capture_output=True, text=True, timeout=10)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+        self.assertEqual(received, {
+            "path": "/v1/books/451198/cover?path=%2Fi%2F98%2F451198%2Fcover.jpg",
+            "authorization": "Bearer test-device-token",
+        })
+
     def test_pair_claim_accepts_spaced_relay_json(self):
         received = []
 

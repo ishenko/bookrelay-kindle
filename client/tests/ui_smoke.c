@@ -93,6 +93,18 @@ static GtkWidget *find_data_button(GtkWidget *root, const gchar *key) {
     return found;
 }
 
+static GtkWidget *find_cover_image(GtkWidget *root) {
+    GList *children, *item;
+    GtkWidget *found = NULL;
+    if (GTK_IS_IMAGE(root) && gtk_image_get_pixbuf(GTK_IMAGE(root))) return root;
+    if (!GTK_IS_CONTAINER(root)) return NULL;
+    children = gtk_container_get_children(GTK_CONTAINER(root));
+    for (item = children; item && !found; item = item->next)
+        found = find_cover_image(GTK_WIDGET(item->data));
+    g_list_free(children);
+    return found;
+}
+
 static void snapshot(App *app, const gchar *dir, const char *name) {
     GdkPixbuf *pixels;
     gchar *path = g_build_filename(dir, name, NULL);
@@ -303,6 +315,30 @@ int main(int argc, char **argv) {
     if (!button) g_error("book grid has no card");
     expect_inside_window(&app, button, "book card");
     snapshot(&app, argv[1], "book-list.png");
+    if (g_getenv("BOOKRELAY_TEST_COVER_RELAY")) {
+        GtkWidget *image;
+        gint64 deadline = g_get_monotonic_time() + 10 * G_USEC_PER_SEC;
+        g_free(app.config->relay_url);
+        app.config->relay_url = g_strdup(g_getenv("BOOKRELAY_TEST_COVER_RELAY"));
+        g_free(book->id);
+        book->id = g_strdup("451198");
+        book->cover_url = g_strdup("/v1/books/451198/cover?path=%2Fi%2F98%2F451198%2Fcover.jpg");
+        render_books(&app, books);
+        while (app.active_tasks && g_get_monotonic_time() < deadline) {
+            drain_events();
+            g_usleep(10000);
+        }
+        drain_events();
+        if (app.active_tasks) g_error("cover download timed out");
+        image = find_cover_image(app.results);
+        if (!image || !GTK_WIDGET_VISIBLE(image) || !GTK_WIDGET_MAPPED(image))
+            g_error("downloaded cover is not visible");
+        if (gdk_pixbuf_get_width(gtk_image_get_pixbuf(GTK_IMAGE(image))) < 100 ||
+            gdk_pixbuf_get_height(gtk_image_get_pixbuf(GTK_IMAGE(image))) < 150)
+            g_error("downloaded cover was scaled to a tiny image");
+        snapshot(&app, argv[1], "book-list-with-cover.png");
+        button = find_data_button(app.results, "book-row");
+    }
     gtk_button_clicked(GTK_BUTTON(button));
     drain_events();
     details = g_object_get_data(G_OBJECT(app.page_window), "bookrelay-details-page");

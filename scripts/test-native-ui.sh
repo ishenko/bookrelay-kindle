@@ -13,6 +13,7 @@ python3 client/tests/test_ui_pairing.py "$output_dir/ui-smoke"
 xvfb-run -a -s '-screen 0 1264x1680x24' "$output_dir/ui-smoke" "$output_dir/1264x1680"
 xvfb-run -a -s '-screen 0 758x1024x24' "$output_dir/ui-smoke" "$output_dir/758x1024"
 BOOKRELAY_TEST_DPI=300 xvfb-run -a -s '-screen 0 1264x1680x24' "$output_dir/ui-smoke" "$output_dir/1264x1680-300dpi"
+python3 client/tests/test_cover_ui.py "$output_dir/ui-smoke" "$output_dir/1264x1680-300dpi"
 BOOKRELAY_TEST_DPI=300 xvfb-run -a -s '-screen 0 758x1024x24' "$output_dir/ui-smoke" "$output_dir/758x1024-300dpi"
 BOOKRELAY_KEYBOARD=kindle BOOKRELAY_LIPC_SET_PROP=/no/such/lipc-set-prop \
   xvfb-run -a -s '-screen 0 758x1024x24' "$output_dir/ui-smoke" "$output_dir/758x1024"

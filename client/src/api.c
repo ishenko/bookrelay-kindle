@@ -349,10 +349,14 @@ gchar *bookrelay_api_delivery_status(const gchar *base_url, const gchar *token, 
     return state;
 }
 
-gboolean bookrelay_api_download(const gchar *url, GByteArray **payload, GError **error) {
+gboolean bookrelay_api_download(const gchar *base_url, const gchar *token, const gchar *url, GByteArray **payload, GError **error) {
     GByteArray *bytes = NULL;
     long status;
-    if (!request_bytes("GET", url, NULL, NULL, MAX_COVER_RESPONSE_BYTES, &bytes, &status, error)) return FALSE;
+    gchar *full_url = g_str_has_prefix(url, "/v1/books/") ? join_url(base_url, url) : g_strdup(url);
+    gboolean ok = request_bytes("GET", full_url, g_str_has_prefix(url, "/v1/books/") ? token : NULL,
+                                NULL, MAX_COVER_RESPONSE_BYTES, &bytes, &status, error);
+    g_free(full_url);
+    if (!ok) return FALSE;
     *payload = bytes;
     return TRUE;
 }

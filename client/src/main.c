@@ -118,6 +118,8 @@ typedef struct {
     guint size;
     guint generation;
     gboolean has_next;
+    gint cover_width;
+    gint cover_height;
     GtkWidget *image;
     GtkWidget *placeholder;
     GtkWidget *settings_page;
@@ -690,7 +692,7 @@ static gpointer async_task_worker(gpointer userdata) {
             task->state = bookrelay_api_delivery_status(task->base_url, task->token, task->job_id, &task->error);
             break;
         case TASK_COVER:
-            bookrelay_api_download(task->url, &task->cover_bytes, &task->error);
+            bookrelay_api_download(task->base_url, task->token, task->url, &task->cover_bytes, &task->error);
             break;
     }
     g_idle_add(async_task_complete, task);
@@ -850,6 +852,8 @@ static GtkWidget *make_cover(App *app, BookRelayBook *book, gint cover_width) {
         copy_common_task_fields(task, app);
         task->book_id = g_strdup(book->id);
         task->url = g_strdup(book->cover_url);
+        task->cover_width = cover_width;
+        task->cover_height = cover_height;
         task->image = g_object_ref(image);
         task->placeholder = g_object_ref(placeholder);
         gtk_widget_show(placeholder);
@@ -1574,7 +1578,12 @@ static gboolean async_task_complete(gpointer userdata) {
             break;
         case TASK_SUBCATEGORIES:
             if (task->generation != app->generation || app->view != VIEW_SUBCATEGORIES) break;
-            if (!task->categories) show_error(app, "Подкатегории не загрузились", task->error);
+            if (!task->categories) {
+                clear_results(app);
+                render_empty_state(app, "Не удалось загрузить подкатегории");
+                update_pager(app);
+                show_error(app, "Подкатегории не загрузились", task->error);
+            }
             else {
                 if (app->subcategories) g_ptr_array_free(app->subcategories, TRUE);
                 app->subcategories = task->categories;
@@ -1585,7 +1594,12 @@ static gboolean async_task_complete(gpointer userdata) {
             break;
         case TASK_CATALOG_BOOKS:
             if (task->generation != app->generation || app->view != VIEW_BOOKS) break;
-            if (!task->books) show_error(app, "Книги не загрузились", task->error);
+            if (!task->books) {
+                clear_results(app);
+                render_empty_state(app, "Не удалось загрузить книги");
+                update_pager(app);
+                show_error(app, "Книги не загрузились", task->error);
+            }
             else {
                 app->has_next = task->has_next;
                 render_books(app, task->books);
@@ -1703,9 +1717,8 @@ static gboolean async_task_complete(gpointer userdata) {
                 if (cache_has_room(directory, path, task->cover_bytes->len)) g_file_set_contents(path, (const gchar *)task->cover_bytes->data, (gssize)task->cover_bytes->len, NULL);
                 if (pixbuf) {
                     if (task->generation == app->generation) {
-                        gint width = task->image->requisition.width;
-                        gint height = task->image->requisition.height;
-                        GdkPixbuf *scaled = gdk_pixbuf_scale_simple(pixbuf, MAX(1, width), MAX(1, height), GDK_INTERP_BILINEAR);
+                        GdkPixbuf *scaled = gdk_pixbuf_scale_simple(pixbuf, task->cover_width,
+                                                                     task->cover_height, GDK_INTERP_BILINEAR);
                         gtk_image_set_from_pixbuf(GTK_IMAGE(task->image), scaled);
                         gtk_widget_show(task->image);
                         if (task->placeholder) gtk_widget_hide(task->placeholder);

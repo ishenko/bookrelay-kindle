@@ -11,6 +11,7 @@ from bookrelay.delivery import build_epub_email
 from bookrelay.main import create_app
 from bookrelay.models import Book
 from bookrelay.pairing import PairingStore
+from bookrelay.source.flibusta import FlibustaSource
 
 
 def make_epub():
@@ -53,6 +54,39 @@ class FakeMailer:
 
 
 class ApiTests(unittest.IsolatedAsyncioTestCase):
+    async def test_catalog_cover_is_served_through_authenticated_relay(self):
+        class CoverSource(FlibustaSource):
+            def __init__(self):
+                super().__init__()
+                self.cover_requests = []
+
+            def catalog_books(self, category, subcategory, page=1, size=6):
+                return [Book(id="451198", title="A Book", cover_url="https://flibusta.is/i/98/451198/cover.jpg")], False
+
+            def _get(self, path):
+                self.cover_requests.append(path)
+                return b"\xff\xd8\xfftest-jpeg"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            source = CoverSource()
+            app = create_app(Path(tmp) / "relay.sqlite3", source=source, mailer=FakeMailer(), pairing_admin_key="test-owner-key")
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+                start = await client.post("/v1/pair/start", json={"device_id": "pw12", "kindle_email": "reader@kindle.com", "admin_key": "test-owner-key"})
+                token = (await client.post("/v1/pair/claim", json={"code": start.json()["code"]})).json()["token"]
+                headers = {"Authorization": f"Bearer {token}"}
+                catalog = await client.get("/v1/catalog/books", params={"category": "x", "subcategory": "y"}, headers=headers)
+                cover_url = catalog.json()["items"][0]["cover_url"]
+                self.assertTrue(cover_url.startswith("/v1/books/451198/cover?path="))
+                self.assertNotIn("flibusta.is", cover_url)
+                self.assertEqual((await client.get(cover_url)).status_code, 401)
+                cover = await client.get(cover_url, headers=headers)
+                self.assertEqual(cover.status_code, 200)
+                self.assertEqual(cover.content, b"\xff\xd8\xfftest-jpeg")
+                self.assertEqual(source.cover_requests, ["/i/98/451198/cover.jpg"])
+                rejected = await client.get("/v1/books/451198/cover", params={"path": "//elsewhere.test/secret"}, headers=headers)
+                self.assertEqual(rejected.status_code, 404)
+                self.assertEqual(len(source.cover_requests), 1)
+
     async def test_pair_page_shows_remaining_time_from_server_clock(self):
         with tempfile.TemporaryDirectory() as tmp:
             app = create_app(Path(tmp) / "relay.sqlite3", source=FakeSource(), mailer=FakeMailer(), pairing_admin_key="test-owner-key")

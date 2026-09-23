@@ -11,7 +11,7 @@ class KindleUiContractTests(unittest.TestCase):
         self.assertIn("bookrelay_api_pair_claim", api)
         self.assertIn("bookrelay_api_pair_claim", header)
         self.assertIn('"/v1/pair/claim"', api)
-        self.assertIn("Одноразовый код", source)
+        self.assertIn("одноразовый код", source.lower())
         self.assertNotIn("poll_pairing", source)
         self.assertNotIn("TASK_PAIR_STATUS", source)
         self.assertNotIn("Откройте relay /pair", source)
@@ -51,7 +51,7 @@ class KindleUiContractTests(unittest.TestCase):
         source = Path(__file__).parents[1].joinpath("src", "main.c").read_text()
         self.assertIn("gtk_frame_new", source)
         self.assertIn("gtk_widget_set_size_request", source)
-        self.assertIn("Обложка недоступна", source)
+        self.assertIn("Нет обложки", source)
         self.assertIn("gtk_widget_set_no_show_all(placeholder, TRUE)", source)
         self.assertIn("Найдено книг", source)
 
@@ -107,6 +107,14 @@ class KindleUiContractTests(unittest.TestCase):
         source = Path(__file__).parents[1].joinpath("src", "main.c").read_text()
         self.assertIn("new_kindle_page", source)
         self.assertNotIn("gtk_widget_set_size_request(app->results, 0, 0)", source)
+
+    def test_native_navigation_stays_inside_one_top_level_window(self):
+        source = Path(__file__).parents[1].joinpath("src", "main.c").read_text()
+        self.assertIn("app->pages = gtk_notebook_new()", source)
+        self.assertIn("gtk_notebook_set_show_tabs(GTK_NOTEBOOK(app->pages), FALSE)", source)
+        self.assertIn("gtk_notebook_append_page(GTK_NOTEBOOK(app->pages), root, NULL)", source)
+        self.assertNotIn("gtk_window_present(GTK_WINDOW(app->page_window))", source)
+        self.assertNotIn("gtk_window_set_title(GTK_WINDOW(window), KINDLE_APP_WINDOW_TITLE)", source)
 
     def test_native_api_joins_relay_urls_and_reports_error_details(self):
         api = Path(__file__).parents[1].joinpath("src", "api.c").read_text()

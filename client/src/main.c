@@ -17,6 +17,7 @@ typedef struct {
     BookRelayConfig *config;
     gchar *config_path;
     GtkWidget *window;
+    GtkWidget *pages;
     GtkWidget *page_window;
     GtkWidget *query;
     GtkWidget *categories;
@@ -107,6 +108,7 @@ static void show_error(App *app, const gchar *prefix, GError *error);
 static gboolean async_task_complete(gpointer userdata);
 static void show_details(GtkButton *button, gpointer userdata);
 static void make_touch_target(GtkWidget *widget, gint width, gint height);
+static void set_large_font(GtkWidget *widget, const gchar *description);
 
 static void virtual_keyboard_free(VirtualKeyboard *keyboard) {
     if (!keyboard) return;
@@ -124,6 +126,7 @@ static void virtual_keyboard_set_labels(VirtualKeyboard *keyboard) {
         const gchar *label = keyboard->cyrillic ? cyrillic : latin;
         gchar *display = keyboard->shift ? g_utf8_strup(label, -1) : g_strdup(label);
         gtk_button_set_label(GTK_BUTTON(button), display);
+        set_large_font(button, "Sans 24");
         g_free(display);
     }
 }
@@ -131,7 +134,9 @@ static void virtual_keyboard_set_labels(VirtualKeyboard *keyboard) {
 static void virtual_keyboard_show_for(VirtualKeyboard *keyboard, GtkEntry *entry) {
     if (!keyboard || !entry) return;
     keyboard->target = entry;
-    gtk_widget_show_all(keyboard->root);
+    /* no-show-all keeps this hidden when a page is shown. Its children were
+     * shown at construction; show() explicitly reveals the keyboard itself. */
+    gtk_widget_show(keyboard->root);
     virtual_keyboard_set_labels(keyboard);
 }
 
@@ -141,9 +146,20 @@ static gboolean virtual_keyboard_focus_in(GtkWidget *widget, GdkEventFocus *even
     return FALSE;
 }
 
+static gboolean virtual_keyboard_button_press(GtkWidget *widget, GdkEventButton *event, gpointer userdata) {
+    VirtualKeyboard *keyboard = userdata;
+    if (event && event->type == GDK_BUTTON_PRESS) {
+        virtual_keyboard_show_for(keyboard, GTK_ENTRY(widget));
+        gtk_widget_grab_focus(widget);
+    }
+    return FALSE;
+}
+
 static void virtual_keyboard_bind(VirtualKeyboard *keyboard, GtkEntry *entry) {
     if (!keyboard || !entry) return;
+    gtk_widget_add_events(GTK_WIDGET(entry), GDK_BUTTON_PRESS_MASK);
     g_signal_connect(entry, "focus-in-event", G_CALLBACK(virtual_keyboard_focus_in), keyboard);
+    g_signal_connect(entry, "button-press-event", G_CALLBACK(virtual_keyboard_button_press), keyboard);
 }
 
 static void virtual_keyboard_insert(VirtualKeyboard *keyboard, const gchar *value) {
@@ -193,6 +209,7 @@ static void virtual_keyboard_clicked(GtkButton *button, gpointer userdata) {
         keyboard->cyrillic = !keyboard->cyrillic;
         keyboard->shift = FALSE;
         gtk_button_set_label(button, keyboard->cyrillic ? "EN" : "РУС");
+        set_large_font(GTK_WIDGET(button), "Sans 18");
         virtual_keyboard_set_labels(keyboard);
     } else if (g_strcmp0(key, "done") == 0) {
         gtk_widget_hide(keyboard->root);
@@ -210,9 +227,10 @@ static void virtual_keyboard_clicked(GtkButton *button, gpointer userdata) {
 
 static GtkWidget *virtual_keyboard_button(VirtualKeyboard *keyboard, const gchar *label, const gchar *key) {
     GtkWidget *button = gtk_button_new_with_label(label);
-    make_touch_target(button, 44, 42);
+    make_touch_target(button, 48, MAX(42, gdk_screen_get_height(gdk_screen_get_default()) / 22));
+    set_large_font(button, "Sans 24");
     gtk_button_set_relief(GTK_BUTTON(button), GTK_RELIEF_NORMAL);
-    g_object_set_data(G_OBJECT(button), "bookrelay-key", (gpointer)key);
+    g_object_set_data_full(G_OBJECT(button), "bookrelay-key", g_strdup(key), g_free);
     g_signal_connect(button, "clicked", G_CALLBACK(virtual_keyboard_clicked), keyboard);
     return button;
 }
@@ -244,7 +262,6 @@ static VirtualKeyboard *virtual_keyboard_new(GtkWidget *parent, GtkEntry *initia
     keyboard->target = initial_target;
     keyboard->letter_buttons = g_ptr_array_new();
     g_object_set_data_full(G_OBJECT(keyboard->root), "bookrelay-keyboard-state", keyboard, (GDestroyNotify)virtual_keyboard_free);
-    gtk_widget_set_no_show_all(keyboard->root, TRUE);
     gtk_container_set_border_width(GTK_CONTAINER(keyboard->root), 2);
 
     row = gtk_hbox_new(TRUE, 1);
@@ -279,24 +296,32 @@ static VirtualKeyboard *virtual_keyboard_new(GtkWidget *parent, GtkEntry *initia
         gchar label[2];
         label[0] = (gchar)('0' + i);
         label[1] = 0;
-        button = virtual_keyboard_button(keyboard, label, g_strdup(label));
+        button = virtual_keyboard_button(keyboard, label, label);
         gtk_box_pack_start(GTK_BOX(row), button, TRUE, TRUE, 0);
     }
     virtual_keyboard_pack_row(keyboard->root, row);
 
     row = gtk_hbox_new(TRUE, 1);
     button = virtual_keyboard_button(keyboard, "РУС", "language");
+    set_large_font(button, "Sans 18");
     gtk_box_pack_start(GTK_BOX(row), button, TRUE, TRUE, 0);
     button = virtual_keyboard_button(keyboard, "Shift", "shift");
+    set_large_font(button, "Sans 18");
     gtk_box_pack_start(GTK_BOX(row), button, TRUE, TRUE, 0);
     button = virtual_keyboard_button(keyboard, "Пробел", "space");
+    set_large_font(button, "Sans 18");
     gtk_box_pack_start(GTK_BOX(row), button, TRUE, TRUE, 0);
-    button = virtual_keyboard_button(keyboard, "⌫", "backspace");
+    button = virtual_keyboard_button(keyboard, "Удалить", "backspace");
+    set_large_font(button, "Sans 18");
     gtk_box_pack_start(GTK_BOX(row), button, TRUE, TRUE, 0);
     button = virtual_keyboard_button(keyboard, "Готово", "done");
+    set_large_font(button, "Sans 18");
     gtk_box_pack_start(GTK_BOX(row), button, TRUE, TRUE, 0);
     virtual_keyboard_pack_row(keyboard->root, row);
 
+    gtk_widget_show_all(keyboard->root);
+    gtk_widget_hide(keyboard->root);
+    gtk_widget_set_no_show_all(keyboard->root, TRUE);
     if (parent) gtk_box_pack_start(GTK_BOX(parent), keyboard->root, FALSE, FALSE, 2);
     virtual_keyboard_bind(keyboard, initial_target);
     return keyboard;
@@ -309,6 +334,9 @@ static void set_kindle_dialog_role(GtkWidget *dialog) {
 static void set_large_font(GtkWidget *widget, const gchar *description) {
     PangoFontDescription *font = pango_font_description_from_string(description);
     gtk_widget_modify_font(widget, font);
+    /* GtkButton owns a GtkLabel; GTK2 does not inherit the button font. */
+    if (GTK_IS_BUTTON(widget) && gtk_bin_get_child(GTK_BIN(widget)))
+        gtk_widget_modify_font(gtk_bin_get_child(GTK_BIN(widget)), font);
     pango_font_description_free(font);
 }
 
@@ -323,23 +351,24 @@ static void page_window_destroyed(GtkWidget *window, gpointer userdata) {
 }
 
 static GtkWidget *new_kindle_page(App *app, const gchar *heading, GtkWidget **body_out, GtkWidget **actions_out) {
-    GtkWidget *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-    GtkWidget *root = gtk_vbox_new(FALSE, 8);
-    GtkWidget *header = gtk_hbox_new(FALSE, 8);
-    GtkWidget *heading_label = gtk_label_new(heading);
-    GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
-    GtkWidget *body = gtk_vbox_new(FALSE, 10);
-    GtkWidget *actions = gtk_hbox_new(TRUE, 8);
+    GtkWidget *root;
+    GtkWidget *header;
+    GtkWidget *heading_label;
+    GtkWidget *scroll;
+    GtkWidget *body;
+    GtkWidget *actions;
 
     if (app->page_window) {
-        gtk_window_present(GTK_WINDOW(app->page_window));
+        gtk_notebook_set_current_page(GTK_NOTEBOOK(app->pages), gtk_notebook_page_num(GTK_NOTEBOOK(app->pages), app->page_window));
         return NULL;
     }
 
-    gtk_window_set_title(GTK_WINDOW(window), KINDLE_APP_WINDOW_TITLE);
-    gtk_window_set_default_size(GTK_WINDOW(window), 758, 900);
-    gtk_window_set_position(GTK_WINDOW(window), GTK_WIN_POS_CENTER);
-    gtk_window_set_resizable(GTK_WINDOW(window), TRUE);
+    root = gtk_vbox_new(FALSE, 8);
+    header = gtk_hbox_new(FALSE, 8);
+    heading_label = gtk_label_new(heading);
+    scroll = gtk_scrolled_window_new(NULL, NULL);
+    body = gtk_vbox_new(FALSE, 10);
+    actions = gtk_hbox_new(TRUE, 8);
     gtk_container_set_border_width(GTK_CONTAINER(root), 12);
     set_large_font(heading_label, "Sans Bold 22");
     gtk_misc_set_alignment(GTK_MISC(heading_label), 0, 0.5);
@@ -347,17 +376,27 @@ static GtkWidget *new_kindle_page(App *app, const gchar *heading, GtkWidget **bo
     gtk_box_pack_start(GTK_BOX(root), header, FALSE, FALSE, 0);
 
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
-    gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(scroll), GTK_SHADOW_IN);
+    gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(scroll), GTK_SHADOW_NONE);
     gtk_container_set_border_width(GTK_CONTAINER(body), 8);
     gtk_scrolled_window_add_with_viewport(GTK_SCROLLED_WINDOW(scroll), body);
     gtk_box_pack_start(GTK_BOX(root), scroll, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(root), actions, FALSE, FALSE, 0);
-    gtk_container_add(GTK_CONTAINER(window), root);
-    g_signal_connect(window, "destroy", G_CALLBACK(page_window_destroyed), app);
-    app->page_window = window;
+    gtk_notebook_append_page(GTK_NOTEBOOK(app->pages), root, NULL);
+    g_signal_connect(root, "destroy", G_CALLBACK(page_window_destroyed), app);
+    app->page_window = root;
+    /* GTK2 will not select a hidden notebook page. The controls are added and
+     * shown by the caller immediately after this page becomes active. */
+    gtk_widget_show(root);
+    gtk_notebook_set_current_page(GTK_NOTEBOOK(app->pages), gtk_notebook_page_num(GTK_NOTEBOOK(app->pages), root));
     if (body_out) *body_out = body;
     if (actions_out) *actions_out = actions;
-    return window;
+    return root;
+}
+
+static void attach_page_keyboard(GtkWidget *page_root, VirtualKeyboard *keyboard) {
+    if (!page_root || !keyboard || !keyboard->root) return;
+    gtk_box_pack_start(GTK_BOX(page_root), keyboard->root, FALSE, FALSE, 4);
+    gtk_box_reorder_child(GTK_BOX(page_root), keyboard->root, 2);
 }
 
 static GtkWidget *page_button(const gchar *label) {
@@ -524,13 +563,15 @@ static GdkPixbuf *pixbuf_from_bytes(GByteArray *bytes) {
 
 static GtkWidget *make_cover(App *app, BookRelayBook *book) {
     gchar *path = cover_cache_path(book->id);
+    gint cover_width = CLAMP(gdk_screen_get_width(gdk_screen_get_default()) / 8, 104, 160);
+    gint cover_height = cover_width * 146 / 104;
     GdkPixbuf *pixbuf = NULL;
     GtkWidget *frame = gtk_frame_new(NULL);
     GtkWidget *box = gtk_vbox_new(FALSE, 2);
     GtkWidget *image = gtk_image_new();
-    GtkWidget *placeholder = gtk_label_new("Обложка недоступна");
-    gtk_widget_set_size_request(image, 104, 146);
-    gtk_widget_set_size_request(placeholder, 104, 146);
+    GtkWidget *placeholder = gtk_label_new("Нет обложки");
+    gtk_widget_set_size_request(image, cover_width, cover_height);
+    gtk_widget_set_size_request(placeholder, cover_width, cover_height);
     /* render_books() calls gtk_widget_show_all() after cards are built. Keep
      * the mutually exclusive placeholder from being re-shown by that call. */
     gtk_widget_set_no_show_all(placeholder, TRUE);
@@ -540,8 +581,8 @@ static GtkWidget *make_cover(App *app, BookRelayBook *book) {
     gtk_box_pack_start(GTK_BOX(box), image, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(box), placeholder, TRUE, TRUE, 0);
     gtk_container_add(GTK_CONTAINER(frame), box);
-    gtk_widget_set_size_request(frame, 116, 162);
-    if (g_file_test(path, G_FILE_TEST_EXISTS)) pixbuf = gdk_pixbuf_new_from_file_at_scale(path, 104, 146, TRUE, NULL);
+    gtk_widget_set_size_request(frame, cover_width + 12, cover_height + 16);
+    if (g_file_test(path, G_FILE_TEST_EXISTS)) pixbuf = gdk_pixbuf_new_from_file_at_scale(path, cover_width, cover_height, TRUE, NULL);
     if (pixbuf) {
         gtk_image_set_from_pixbuf(GTK_IMAGE(image), pixbuf);
         gtk_widget_hide(placeholder);
@@ -553,6 +594,7 @@ static GtkWidget *make_cover(App *app, BookRelayBook *book) {
         task->url = g_strdup(book->cover_url);
         task->image = g_object_ref(image);
         task->placeholder = g_object_ref(placeholder);
+        gtk_widget_show(placeholder);
         start_async_task(task);
     } else {
         gtk_widget_show(placeholder);
@@ -688,7 +730,12 @@ static void show_details(GtkButton *button, gpointer userdata) {
     gtk_label_set_line_wrap(GTK_LABEL(label), TRUE);
     gtk_misc_set_alignment(GTK_MISC(label), 0, 0);
     set_large_font(label, "Sans 18");
-    gtk_box_pack_start(GTK_BOX(body), cover, FALSE, FALSE, 4);
+    gtk_widget_set_size_request(label, MAX(200, gdk_screen_get_width(gdk_screen_get_default()) - 96), -1);
+    {
+        GtkWidget *cover_alignment = gtk_alignment_new(0, 0, 0, 0);
+        gtk_container_add(GTK_CONTAINER(cover_alignment), cover);
+        gtk_box_pack_start(GTK_BOX(body), cover_alignment, FALSE, FALSE, 4);
+    }
     gtk_box_pack_start(GTK_BOX(body), label, FALSE, FALSE, 12);
 
     close_button = page_button("Назад");
@@ -776,14 +823,14 @@ static void pair_page_connect(GtkButton *button, gpointer userdata) {
 
     if (!valid_relay_url(relay_url)) {
         set_status(app, "Relay URL должен начинаться с http:// или https://");
-        gtk_window_set_focus(GTK_WINDOW(page->window), GTK_WIDGET(page->relay));
+        gtk_window_set_focus(GTK_WINDOW(app->window), GTK_WIDGET(page->relay));
         virtual_keyboard_show_for(page->keyboard, page->relay);
         g_free(relay_url);
         return;
     }
     if (!pairing_code || !*pairing_code) {
         set_status(app, "Введите одноразовый код");
-        gtk_window_set_focus(GTK_WINDOW(page->window), GTK_WIDGET(page->code));
+        gtk_window_set_focus(GTK_WINDOW(app->window), GTK_WIDGET(page->code));
         virtual_keyboard_show_for(page->keyboard, page->code);
         g_free(relay_url);
         return;
@@ -820,9 +867,9 @@ static void pair_clicked(GtkButton *button, gpointer userdata) {
     page->code = GTK_ENTRY(gtk_entry_new());
     g_object_set_data_full(G_OBJECT(window), "bookrelay-pair-page", page, g_free);
 
-    intro = gtk_label_new("Введите адрес relay и одноразовый код. После подключения код больше не понадобится.");
-    relay_label = gtk_label_new("Relay URL");
-    code_label = gtk_label_new("Одноразовый код");
+    intro = gtk_label_new("Введите URL сервера и одноразовый код.");
+    relay_label = gtk_label_new("Адрес relay");
+    code_label = gtk_label_new("Код подключения");
     gtk_label_set_line_wrap(GTK_LABEL(intro), TRUE);
     gtk_misc_set_alignment(GTK_MISC(intro), 0, 0.5);
     set_large_font(intro, "Sans 17");
@@ -830,6 +877,10 @@ static void pair_clicked(GtkButton *button, gpointer userdata) {
     set_large_font(code_label, "Sans Bold 18");
     set_large_font(GTK_WIDGET(page->relay), "Sans 20");
     set_large_font(GTK_WIDGET(page->code), "Sans 20");
+    gtk_entry_set_width_chars(page->relay, 8);
+    gtk_entry_set_width_chars(page->code, 8);
+    gtk_widget_set_size_request(GTK_WIDGET(page->relay), -1, 56);
+    gtk_widget_set_size_request(GTK_WIDGET(page->code), -1, 56);
     gtk_entry_set_text(page->relay, app->config->relay_url ? app->config->relay_url : "");
     gtk_entry_set_max_length(page->code, 32);
     gtk_box_pack_start(GTK_BOX(body), intro, FALSE, FALSE, 4);
@@ -837,8 +888,9 @@ static void pair_clicked(GtkButton *button, gpointer userdata) {
     gtk_box_pack_start(GTK_BOX(body), GTK_WIDGET(page->relay), FALSE, FALSE, 4);
     gtk_box_pack_start(GTK_BOX(body), code_label, FALSE, FALSE, 4);
     gtk_box_pack_start(GTK_BOX(body), GTK_WIDGET(page->code), FALSE, FALSE, 4);
-    page->keyboard = virtual_keyboard_new(body, page->relay);
+    page->keyboard = virtual_keyboard_new(NULL, page->relay);
     virtual_keyboard_bind(page->keyboard, page->code);
+    attach_page_keyboard(window, page->keyboard);
 
     cancel_button = page_button("Отмена");
     connect_button = page_button("Подключить");
@@ -848,7 +900,7 @@ static void pair_clicked(GtkButton *button, gpointer userdata) {
     gtk_box_pack_start(GTK_BOX(actions), connect_button, TRUE, TRUE, 0);
     gtk_widget_show_all(window);
     virtual_keyboard_show_for(page->keyboard, page->relay);
-    gtk_window_set_focus(GTK_WINDOW(window), GTK_WIDGET(page->relay));
+    gtk_window_set_focus(GTK_WINDOW(app->window), GTK_WIDGET(page->relay));
     g_idle_add(focus_widget_idle, page->relay);
 }
 
@@ -876,7 +928,7 @@ static void settings_page_save(GtkButton *button, gpointer userdata) {
     gchar *relay_url = trim_relay_url(gtk_entry_get_text(page->relay));
     if (!valid_relay_url(relay_url)) {
         set_status(app, "Relay URL должен начинаться с http:// или https://");
-        gtk_window_set_focus(GTK_WINDOW(page->window), GTK_WIDGET(page->relay));
+        gtk_window_set_focus(GTK_WINDOW(app->window), GTK_WIDGET(page->relay));
         virtual_keyboard_show_for(page->keyboard, page->relay);
         g_free(relay_url);
         return;
@@ -923,6 +975,8 @@ static void settings_clicked(GtkButton *button, gpointer userdata) {
     set_large_font(GTK_WIDGET(page->relay), "Sans 20");
     set_large_font(GTK_WIDGET(page->email), "Sans 20");
     set_large_font(page->auto_download, "Sans 17");
+    gtk_entry_set_width_chars(page->relay, 8);
+    gtk_entry_set_width_chars(page->email, 8);
     gtk_entry_set_text(page->relay, app->config->relay_url ? app->config->relay_url : "");
     gtk_entry_set_text(page->email, app->config->kindle_email ? app->config->kindle_email : "");
     gtk_widget_set_sensitive(GTK_WIDGET(page->email), FALSE);
@@ -933,7 +987,8 @@ static void settings_clicked(GtkButton *button, gpointer userdata) {
     gtk_box_pack_start(GTK_BOX(body), GTK_WIDGET(page->email), FALSE, FALSE, 4);
     gtk_box_pack_start(GTK_BOX(body), hint, FALSE, FALSE, 4);
     gtk_box_pack_start(GTK_BOX(body), page->auto_download, FALSE, FALSE, 12);
-    page->keyboard = virtual_keyboard_new(body, page->relay);
+    page->keyboard = virtual_keyboard_new(NULL, page->relay);
+    attach_page_keyboard(window, page->keyboard);
 
     cancel_button = page_button("Отмена");
     save_button = page_button("Сохранить");
@@ -943,7 +998,7 @@ static void settings_clicked(GtkButton *button, gpointer userdata) {
     gtk_box_pack_start(GTK_BOX(actions), save_button, TRUE, TRUE, 0);
     gtk_widget_show_all(window);
     virtual_keyboard_show_for(page->keyboard, page->relay);
-    gtk_window_set_focus(GTK_WINDOW(window), GTK_WIDGET(page->relay));
+    gtk_window_set_focus(GTK_WINDOW(app->window), GTK_WIDGET(page->relay));
     g_idle_add(focus_widget_idle, page->relay);
 }
 
@@ -1079,7 +1134,8 @@ static gboolean async_task_complete(gpointer userdata) {
 
 static void build_ui(App *app) {
     GtkWidget *root = gtk_vbox_new(FALSE, 6);
-    GtkWidget *header = gtk_hbox_new(FALSE, 8);
+    GtkWidget *header = gtk_vbox_new(FALSE, 4);
+    GtkWidget *shell = gtk_vbox_new(FALSE, 0);
     GtkWidget *search_row = gtk_hbox_new(FALSE, 8);
     GtkWidget *category_row = gtk_hbox_new(FALSE, 8);
     GtkWidget *actions = gtk_hbox_new(TRUE, 6);
@@ -1094,6 +1150,7 @@ static void build_ui(App *app) {
     GtkWidget *next_page = gtk_button_new_with_label("Дальше");
     GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
     app->window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    app->pages = gtk_notebook_new();
     app->query = gtk_entry_new();
     app->categories = gtk_combo_box_new_text();
     app->results = gtk_vbox_new(FALSE, 6);
@@ -1105,7 +1162,9 @@ static void build_ui(App *app) {
     app->page = 1;
 
     gtk_window_set_title(GTK_WINDOW(app->window), KINDLE_APP_WINDOW_TITLE);
-    gtk_window_set_default_size(GTK_WINDOW(app->window), 758, 900);
+    gtk_window_set_default_size(GTK_WINDOW(app->window),
+                                gdk_screen_get_width(gdk_screen_get_default()),
+                                gdk_screen_get_height(gdk_screen_get_default()));
     gtk_window_set_position(GTK_WINDOW(app->window), GTK_WIN_POS_CENTER);
     gtk_window_set_resizable(GTK_WINDOW(app->window), TRUE);
     set_large_font(title, "Sans Bold 22");
@@ -1114,8 +1173,10 @@ static void build_ui(App *app) {
     set_large_font(app->query, "Sans 19");
     set_large_font(app->categories, "Sans 16");
     gtk_misc_set_alignment(GTK_MISC(title), 0, 0.5);
-    gtk_misc_set_alignment(GTK_MISC(app->connection), 1, 0.5);
+    gtk_misc_set_alignment(GTK_MISC(app->connection), 0, 0.5);
+    gtk_label_set_line_wrap(GTK_LABEL(app->connection), TRUE);
     gtk_misc_set_alignment(GTK_MISC(app->status), 0, 0.5);
+    gtk_label_set_line_wrap(GTK_LABEL(app->status), TRUE);
     gtk_entry_set_activates_default(GTK_ENTRY(app->query), TRUE);
     gtk_entry_set_width_chars(GTK_ENTRY(app->query), 24);
     gtk_widget_set_tooltip_text(app->query, "Название или автор");
@@ -1134,8 +1195,10 @@ static void build_ui(App *app) {
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
     gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(scroll), GTK_SHADOW_IN);
     gtk_scrolled_window_add_with_viewport(GTK_SCROLLED_WINDOW(scroll), app->results);
+    gtk_notebook_set_show_tabs(GTK_NOTEBOOK(app->pages), FALSE);
+    gtk_notebook_set_show_border(GTK_NOTEBOOK(app->pages), FALSE);
 
-    gtk_box_pack_start(GTK_BOX(header), title, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(header), title, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(header), app->connection, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(search_row), app->query, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(search_row), search_button, FALSE, FALSE, 0);
@@ -1156,9 +1219,12 @@ static void build_ui(App *app) {
     }
     gtk_box_pack_start(GTK_BOX(root), navigation, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(root), actions, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(root), app->status, FALSE, FALSE, 0);
     gtk_container_set_border_width(GTK_CONTAINER(root), 10);
-    gtk_container_add(GTK_CONTAINER(app->window), root);
+    gtk_notebook_append_page(GTK_NOTEBOOK(app->pages), root, NULL);
+    gtk_box_pack_start(GTK_BOX(shell), app->pages, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(shell), app->status, FALSE, FALSE, 4);
+    gtk_container_set_border_width(GTK_CONTAINER(shell), 8);
+    gtk_container_add(GTK_CONTAINER(app->window), shell);
     g_signal_connect(search_button, "clicked", G_CALLBACK(search_clicked), app);
     g_signal_connect(app->query, "activate", G_CALLBACK(search_entry_activate), app);
     g_signal_connect(pair_button, "clicked", G_CALLBACK(pair_clicked), app);

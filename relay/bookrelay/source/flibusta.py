@@ -21,8 +21,18 @@ class SourceUnavailable(Exception):
     pass
 
 
+def parse_feed_root(payload: bytes) -> ET.Element:
+    try:
+        root = ET.fromstring(payload)
+    except ET.ParseError as exc:
+        raise SourceUnavailable("Flibusta returned an invalid catalog") from exc
+    if root.tag != f"{ATOM}feed":
+        raise SourceUnavailable("Flibusta returned an invalid catalog")
+    return root
+
+
 def parse_opds_feed(payload: bytes, base_url: str) -> tuple[list[dict[str, str]], list[Book], bool]:
-    root = ET.fromstring(payload)
+    root = parse_feed_root(payload)
     sections, books = [], []
     has_next = any(link.get("rel") == "next" for link in root.findall(f"{ATOM}link"))
     for entry in root.findall(f"{ATOM}entry"):
@@ -119,11 +129,11 @@ class FlibustaSource:
                 return cached[1]
             raise
         try:
-            ET.fromstring(payload)
-        except ET.ParseError as exc:
+            parse_feed_root(payload)
+        except SourceUnavailable:
             if cached:
                 return cached[1]
-            raise SourceUnavailable("Flibusta returned an invalid catalog") from exc
+            raise
         if len(payload) <= 512 * 1024:
             with self._feed_cache_lock:
                 old = self._feed_cache.pop(path, None)
@@ -146,10 +156,7 @@ class FlibustaSource:
                 raise SourceUnavailable("Flibusta returned invalid pagination")
             visited.add(path)
             payload = self._catalog_feed(path) if cache else self._get(path)
-            try:
-                root = ET.fromstring(payload)
-            except ET.ParseError as exc:
-                raise SourceUnavailable("Flibusta returned an invalid catalog") from exc
+            root = parse_feed_root(payload)
             next_link = next((link.get("href") for link in root.findall(f"{ATOM}link") if link.get("rel") == "next"), None)
             _, books, _ = parse_opds_feed(payload, self.base_url)
             books_seen.extend(books)
@@ -157,19 +164,13 @@ class FlibustaSource:
         return books_seen[start:start + size], len(books_seen) > start + size or bool(path)
 
     def categories(self) -> list[dict[str, str]]:
-        try:
-            sections, _, _ = parse_opds_feed(self._catalog_feed("/opds/genres"), self.base_url)
-        except ET.ParseError as exc:
-            raise SourceUnavailable("Flibusta returned an invalid catalog") from exc
+        sections, _, _ = parse_opds_feed(self._catalog_feed("/opds/genres"), self.base_url)
         return sections
 
     def subcategories(self, category: str) -> list[dict[str, str]]:
         if not re.fullmatch(r"/opds/genres/[^/?#]+", category):
             raise ValueError("unknown category")
-        try:
-            sections, _, _ = parse_opds_feed(self._catalog_feed(category), self.base_url)
-        except ET.ParseError as exc:
-            raise SourceUnavailable("Flibusta returned an invalid catalog") from exc
+        sections, _, _ = parse_opds_feed(self._catalog_feed(category), self.base_url)
         return sections
 
     def catalog_books(self, category: str, subcategory: str, page: int = 1, size: int = 6) -> tuple[list[Book], bool]:

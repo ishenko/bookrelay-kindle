@@ -28,6 +28,9 @@ class FlibustaParserTests(unittest.TestCase):
         source._get = lambda path: b'<html>temporarily unavailable'
         self.assertEqual(source.categories(), expected)
         self.assertEqual(source._feed_cache['/opds/genres'][1], cached_feed)
+        source._get = lambda path: b'<html><body>temporarily unavailable</body></html>'
+        self.assertEqual(source.categories(), expected)
+        self.assertEqual(source._feed_cache['/opds/genres'][1], cached_feed)
 
     def test_invalid_source_feed_is_service_unavailable(self):
         class StubSource(FlibustaSource):
@@ -35,6 +38,11 @@ class FlibustaParserTests(unittest.TestCase):
                 return b'<html>temporarily unavailable'
 
         source = StubSource()
+        with self.assertRaises(SourceUnavailable):
+            source.categories()
+        with self.assertRaises(SourceUnavailable):
+            source.catalog_books('/opds/genres/1', '/opds/genres/1/2')
+        source._get = lambda path: b'<html><body>temporarily unavailable</body></html>'
         with self.assertRaises(SourceUnavailable):
             source.categories()
         with self.assertRaises(SourceUnavailable):

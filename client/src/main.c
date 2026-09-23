@@ -649,6 +649,20 @@ static gboolean focus_widget_idle(gpointer userdata) {
     return FALSE;
 }
 
+static gboolean focus_search_idle(gpointer userdata) {
+    App *app = userdata;
+    if (!app->page_window && app->view == VIEW_SEARCH && GTK_WIDGET_MAPPED(app->query)) {
+        /* Finish the icon's button-release before LIPC takes X focus. The
+         * setup page already opens the keyboard after its entry is mapped. */
+        virtual_keyboard_show_for(g_object_get_data(G_OBJECT(app->keyboard),
+                                                    "bookrelay-keyboard-state"),
+                                  GTK_ENTRY(app->query));
+        gtk_window_set_focus(GTK_WINDOW(app->window), app->query);
+        gtk_widget_grab_focus(app->query);
+    }
+    return FALSE;
+}
+
 static void book_row_free(BookRow *row) {
     if (!row) return;
     bookrelay_book_free(row->book);
@@ -1958,14 +1972,9 @@ static void search_icon_clicked(GtkButton *button, gpointer userdata) {
     update_pager(app);
     gtk_widget_hide(app->header_title);
     gtk_widget_show(app->search_row);
-    /* The entry must be mapped before opening the keyboard. Once it is
-     * mapped, use the same open-then-focus order as the working setup form. */
-    virtual_keyboard_show_for(g_object_get_data(G_OBJECT(app->keyboard),
-                                                "bookrelay-keyboard-state"),
-                              GTK_ENTRY(app->query));
-    gtk_window_set_focus(GTK_WINDOW(app->window), app->query);
-    g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, focus_widget_idle,
-                    g_object_ref(app->query), g_object_unref);
+    /* Opening LIPC while GTK is still handling the icon release can give
+     * the keyboard X focus before the newly shown entry is ready for input. */
+    g_idle_add(focus_search_idle, app);
 }
 
 static void help_clicked(GtkButton *button, gpointer userdata) {

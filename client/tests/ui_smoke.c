@@ -22,6 +22,15 @@ static void tap_search_icon(App *app) {
     drain_events();
 }
 
+static void expect_search_keyboard_deferred(GtkWidget *widget, GdkEvent *event, gpointer userdata) {
+    App *app = userdata;
+    VirtualKeyboard *keyboard;
+    if (event->type != GDK_BUTTON_RELEASE) return;
+    keyboard = g_object_get_data(G_OBJECT(app->keyboard), "bookrelay-keyboard-state");
+    if (keyboard->native_open)
+        g_error("Kindle keyboard opened inside the search icon release handler");
+}
+
 static void wait_for_pairing(App *app, gboolean expect_error) {
     gint64 deadline = g_get_monotonic_time() + 10 * G_USEC_PER_SEC;
     while (g_get_monotonic_time() < deadline) {
@@ -278,6 +287,7 @@ int main(int argc, char **argv) {
         /* Opening from focus-in is too late for the device keyboard: check
          * the toolbar path independently of that fallback handler. */
         g_signal_handlers_block_by_func(app.query, virtual_keyboard_focus_in, search_keyboard);
+        g_signal_connect(app.search_icon, "event-after", G_CALLBACK(expect_search_keyboard_deferred), &app);
         /* A real click bubbles to the window's background-tap handler. */
         if (!gdk_test_simulate_button(app.search_icon->window,
                                       app.search_icon->allocation.x + app.search_icon->allocation.width / 2,

@@ -23,6 +23,7 @@ typedef struct {
     GtkWidget *page_window;
     GtkWidget *query;
     GtkWidget *search_row;
+    GtkWidget *search_icon;
     GtkWidget *header_title;
     GtkWidget *home_button;
     GtkWidget *breadcrumb_row;
@@ -1854,7 +1855,8 @@ static void search_icon_clicked(GtkButton *button, gpointer userdata) {
     update_pager(app);
     gtk_widget_hide(app->header_title);
     gtk_widget_show(app->search_row);
-    gtk_window_set_focus(GTK_WINDOW(app->window), app->query);
+    /* Focus after the toolbar tap has finished. On Kindle the keyboard can
+     * otherwise take input while the pointer is still held on the icon. */
     g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, focus_widget_idle,
                     g_object_ref(app->query), g_object_unref);
 }
@@ -1907,7 +1909,7 @@ static gboolean home_icon_pressed(GtkWidget *widget, GdkEventButton *event, gpoi
     return TRUE;
 }
 
-static gboolean search_icon_pressed(GtkWidget *widget, GdkEventButton *event, gpointer userdata) {
+static gboolean search_icon_released(GtkWidget *widget, GdkEventButton *event, gpointer userdata) {
     if (event->button == 1) search_icon_clicked(NULL, userdata);
     return TRUE;
 }
@@ -1957,6 +1959,7 @@ static void build_ui(App *app) {
     app->pages = gtk_notebook_new();
     app->query = gtk_entry_new();
     app->search_row = gtk_vbox_new(FALSE, 0);
+    app->search_icon = search_icon;
     app->header_title = title;
     app->home_button = home;
     app->breadcrumb_row = breadcrumbs;
@@ -2069,7 +2072,7 @@ static void build_ui(App *app) {
     gtk_widget_set_no_show_all(app->status, TRUE);
     gtk_notebook_append_page(GTK_NOTEBOOK(app->pages), root, NULL);
     gtk_container_add(GTK_CONTAINER(app->window), shell);
-    g_signal_connect(search_icon, "button-press-event", G_CALLBACK(search_icon_pressed), app);
+    g_signal_connect(search_icon, "button-release-event", G_CALLBACK(search_icon_released), app);
     g_signal_connect(favorites_icon, "button-press-event", G_CALLBACK(favorites_icon_pressed), app);
     g_signal_connect(settings_icon, "button-press-event", G_CALLBACK(settings_icon_pressed), app);
     g_signal_connect(help_icon, "button-press-event", G_CALLBACK(help_icon_pressed), app);

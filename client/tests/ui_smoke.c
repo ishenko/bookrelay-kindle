@@ -10,6 +10,18 @@ static void drain_events(void) {
     gdk_display_sync(gdk_display_get_default());
 }
 
+static void tap_search_icon(App *app) {
+    GtkWidget *icon = app->search_icon;
+    gint x = icon->allocation.x + icon->allocation.width / 2;
+    gint y = icon->allocation.y + icon->allocation.height / 2;
+    if (!gdk_test_simulate_button(icon->window, x, y, 1, 0, GDK_BUTTON_PRESS))
+        g_error("could not press search icon");
+    drain_events();
+    if (!gdk_test_simulate_button(icon->window, x, y, 1, 0, GDK_BUTTON_RELEASE))
+        g_error("could not release search icon");
+    drain_events();
+}
+
 static void wait_for_pairing(App *app, gboolean expect_error) {
     gint64 deadline = g_get_monotonic_time() + 10 * G_USEC_PER_SEC;
     while (g_get_monotonic_time() < deadline) {
@@ -170,12 +182,11 @@ int main(int argc, char **argv) {
         if (g_strcmp0(saved->kindle_email, "reader@kindle.com") != 0)
             g_error("email was not saved after retry without a code");
         bookrelay_config_free(saved);
-        search_icon_clicked(NULL, &app);
-        drain_events();
+        tap_search_icon(&app);
         if (gtk_window_get_focus(GTK_WINDOW(app.window)) != app.query)
             g_error("search did not focus after pairing");
         gtk_entry_set_text(GTK_ENTRY(app.query), "test book");
-        search_icon_clicked(NULL, &app);
+        tap_search_icon(&app);
         {
             gint64 deadline = g_get_monotonic_time() + 10 * G_USEC_PER_SEC;
             while (app.active_tasks && g_get_monotonic_time() < deadline) {
@@ -225,7 +236,21 @@ int main(int argc, char **argv) {
             g_error("code Enter did not invoke connection validation");
         gtk_widget_destroy(settings->window);
         app.catalog_ready = TRUE;
-        search_icon_clicked(NULL, &app);
+        /* A real click bubbles to the window's background-tap handler. */
+        if (!gdk_test_simulate_button(app.search_icon->window,
+                                      app.search_icon->allocation.x + app.search_icon->allocation.width / 2,
+                                      app.search_icon->allocation.y + app.search_icon->allocation.height / 2,
+                                      1, 0, GDK_BUTTON_PRESS))
+            g_error("could not press search icon");
+        drain_events();
+        search_keyboard = g_object_get_data(G_OBJECT(app.keyboard), "bookrelay-keyboard-state");
+        if (search_keyboard->native_open)
+            g_error("search keyboard opened before the icon tap finished");
+        if (!gdk_test_simulate_button(app.search_icon->window,
+                                      app.search_icon->allocation.x + app.search_icon->allocation.width / 2,
+                                      app.search_icon->allocation.y + app.search_icon->allocation.height / 2,
+                                      1, 0, GDK_BUTTON_RELEASE))
+            g_error("could not release search icon");
         drain_events();
         expect_visible(app.query, "native search entry");
         if (gtk_window_get_focus(GTK_WINDOW(app.window)) != app.query)

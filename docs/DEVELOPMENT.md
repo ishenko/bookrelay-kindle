@@ -36,7 +36,7 @@ Do not copy a host Linux binary into a Kindle package. The package manifest decl
 
     python scripts/check-kpm.py
     python scripts/test_check_kpm_repository.py
-    python scripts/check-kpm-repository.py --release-tag v0.1.5
+    python scripts/check-kpm-repository.py --release-tag v0.1.6
     python scripts/package-kpm.py --binary client/build/bookrelay-kindle --output dist/bookrelay-kindle.kpkg
     tar -tzf dist/bookrelay-kindle.kpkg
     git diff --check

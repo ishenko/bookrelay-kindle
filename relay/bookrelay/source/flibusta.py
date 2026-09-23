@@ -53,8 +53,16 @@ class FlibustaSource:
                 raise ValueError("source response exceeds 25 MiB")
             return payload
 
-    def search(self, query: str, page: int = 1) -> list[Book]:
-        suffix = f"/booksearch?ask={quote_plus(query)}&page={page}"
+    def search(self, query: str, page: int = 1, category: str | None = None) -> list[Book]:
+        category_terms = {
+            "fantasy": "фантастика",
+            "detective": "детектив",
+            "novel": "роман",
+        }
+        effective_query = query.strip()
+        if category in category_terms:
+            effective_query = " ".join(part for part in (effective_query, category_terms[category]) if part)
+        suffix = f"/booksearch?ask={quote_plus(effective_query)}&page={page}"
         return parse_search_page(self._get(suffix).decode("utf-8", "replace"), self.base_url)
 
     def details(self, book_id: str) -> Book:

@@ -177,13 +177,16 @@ static gchar *join_url(const gchar *base, const gchar *path) {
     return g_strdup_printf("%s/%s", base, path[0] == '/' ? path + 1 : path);
 }
 
-GPtrArray *bookrelay_api_search(const gchar *base_url, const gchar *token, const gchar *query, gint page, GError **error) {
+GPtrArray *bookrelay_api_search(const gchar *base_url, const gchar *token, const gchar *query, const gchar *category, gint page, GError **error) {
     gchar *encoded = url_encode(query);
-    gchar *url = g_strdup_printf("%s/v1/search?q=%s&page=%d", base_url, encoded, page);
+    gchar *encoded_category = category && *category ? url_encode(category) : NULL;
+    gchar *url = encoded_category
+        ? g_strdup_printf("%s/v1/search?q=%s&category=%s&page=%d", base_url, encoded, encoded_category, page)
+        : g_strdup_printf("%s/v1/search?q=%s&page=%d", base_url, encoded, page);
     long status;
     gchar *body = request("GET", url, token, NULL, &status, error);
     GPtrArray *books = body ? parse_books(body) : NULL;
-    g_free(encoded); g_free(url); g_free(body);
+    g_free(encoded); g_free(encoded_category); g_free(url); g_free(body);
     return books;
 }
 
@@ -191,11 +194,17 @@ GPtrArray *bookrelay_api_categories(const gchar *base_url, const gchar *token, G
     gchar *url = join_url(base_url, "/v1/categories");
     long status;
     gchar *body = request("GET", url, token, NULL, &status, error);
-    GPtrArray *items = body ? g_ptr_array_new_with_free_func(g_free) : NULL;
+    GPtrArray *items = body ? g_ptr_array_new_with_free_func((GDestroyNotify)bookrelay_category_free) : NULL;
     const gchar *cursor = body;
-    while (items && (cursor = strstr(cursor, "\"title\":\"")) != NULL) {
-        g_ptr_array_add(items, json_string(cursor, "title"));
-        cursor += 8;
+    while (items && (cursor = strstr(cursor, "\"id\":\"")) != NULL) {
+        const gchar *end = strchr(cursor, '}');
+        BookRelayCategory *category;
+        if (!end) break;
+        category = g_new0(BookRelayCategory, 1);
+        category->id = json_string(cursor, "id");
+        category->title = json_string(cursor, "title");
+        g_ptr_array_add(items, category);
+        cursor = end + 1;
     }
     g_free(url); g_free(body);
     return items;
@@ -285,4 +294,11 @@ BookRelayBook *bookrelay_book_copy(const BookRelayBook *book) {
 void bookrelay_claim_free(BookRelayClaim *claim) {
     if (!claim) return;
     g_free(claim->token); g_free(claim->kindle_email); g_free(claim);
+}
+
+void bookrelay_category_free(BookRelayCategory *category) {
+    if (!category) return;
+    g_free(category->id);
+    g_free(category->title);
+    g_free(category);
 }

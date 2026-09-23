@@ -18,7 +18,12 @@ typedef struct {
     gchar *kindle_email;
 } BookRelayClaim;
 
-GPtrArray *bookrelay_api_search(const gchar *base_url, const gchar *token, const gchar *query, gint page, GError **error);
+typedef struct {
+    gchar *id;
+    gchar *title;
+} BookRelayCategory;
+
+GPtrArray *bookrelay_api_search(const gchar *base_url, const gchar *token, const gchar *query, const gchar *category, gint page, GError **error);
 GPtrArray *bookrelay_api_categories(const gchar *base_url, const gchar *token, GError **error);
 BookRelayBook *bookrelay_api_book(const gchar *base_url, const gchar *token, const gchar *book_id, GError **error);
 BookRelayClaim *bookrelay_api_pair_claim(const gchar *base_url, const gchar *code, GError **error);
@@ -28,5 +33,6 @@ gboolean bookrelay_api_download(const gchar *url, GByteArray **payload, GError *
 void bookrelay_book_free(BookRelayBook *book);
 BookRelayBook *bookrelay_book_copy(const BookRelayBook *book);
 void bookrelay_claim_free(BookRelayClaim *claim);
+void bookrelay_category_free(BookRelayCategory *category);
 
 #endif

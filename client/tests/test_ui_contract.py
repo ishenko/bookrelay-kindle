@@ -22,6 +22,36 @@ class KindleUiContractTests(unittest.TestCase):
         self.assertIn('gtk_button_new_with_label("Назад")', source)
         self.assertIn('gtk_button_new_with_label("Дальше")', source)
 
+    def test_native_search_passes_category_and_handles_empty_state(self):
+        source = Path(__file__).parents[1].joinpath("src", "main.c").read_text()
+        api = Path(__file__).parents[1].joinpath("src", "api.c").read_text()
+        self.assertIn("selected_category", source)
+        self.assertIn("category=", api)
+        self.assertIn("Ничего не найдено", source)
+        self.assertIn("Введите запрос", source)
+
+    def test_native_inputs_have_explicit_focus_and_enter_search(self):
+        source = Path(__file__).parents[1].joinpath("src", "main.c").read_text()
+        self.assertIn("gtk_widget_grab_focus", source)
+        self.assertIn("gtk_window_set_focus", source)
+        self.assertIn("search_entry_activate", source)
+        self.assertIn("gtk_entry_set_activates_default", source)
+
+    def test_pairing_dialog_is_large_and_validates_relay_url(self):
+        source = Path(__file__).parents[1].joinpath("src", "main.c").read_text()
+        self.assertIn("gtk_window_set_default_size", source)
+        self.assertIn("https://", source)
+        self.assertIn("Relay URL должен начинаться", source)
+        self.assertIn("gtk_entry_set_width_chars", source)
+
+    def test_native_cards_have_visible_cover_area_and_status(self):
+        source = Path(__file__).parents[1].joinpath("src", "main.c").read_text()
+        self.assertIn("gtk_frame_new", source)
+        self.assertIn("gtk_widget_set_size_request", source)
+        self.assertIn("Обложка недоступна", source)
+        self.assertIn("gtk_widget_set_no_show_all(placeholder, TRUE)", source)
+        self.assertIn("Найдено книг", source)
+
     def test_results_box_is_wrapped_for_kindlehf_scrolled_window(self):
         source = Path(__file__).parents[1].joinpath("src", "main.c").read_text()
         self.assertIn(

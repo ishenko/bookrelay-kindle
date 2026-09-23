@@ -87,7 +87,7 @@ def create_app(db_path: Path | str | None = None, source=None, mailer=None, pair
     jobs = JobStore(root)
     delivery = DeliveryService(jobs, source, mailer)
     limiter = RateLimiter()
-    app = FastAPI(title="BookRelay Relay", version="0.1.5")
+    app = FastAPI(title="BookRelay Relay", version="0.1.6")
     app.state.pairing = pairing
     app.state.source = source
     app.state.delivery = delivery
@@ -128,10 +128,12 @@ def create_app(db_path: Path | str | None = None, source=None, mailer=None, pair
         return source.categories()
 
     @app.get("/v1/search")
-    def search(request: Request, q: str = Query(min_length=1, max_length=200), page: int = Query(default=1, ge=1, le=100), authorization: str | None = Header(default=None)):
+    def search(request: Request, q: str = Query(default="", max_length=200), category: str | None = Query(default=None, max_length=64), page: int = Query(default=1, ge=1, le=100), authorization: str | None = Header(default=None)):
         limit(request, "search", 60, 60)
         require_device(authorization)
-        return {"items": [book.to_dict() for book in source.search(q, page)], "page": page, "query": q}
+        if not q.strip() and not category:
+            raise HTTPException(status_code=400, detail="query or category is required")
+        return {"items": [book.to_dict() for book in source.search(q, page, category)], "page": page, "query": q, "category": category}
 
     @app.get("/v1/books/{book_id}")
     def book_details(book_id: str, authorization: str | None = Header(default=None)):

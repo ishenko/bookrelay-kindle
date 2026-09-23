@@ -20,7 +20,7 @@ def make_epub():
 
 
 class FakeSource:
-    def search(self, query, page=1):
+    def search(self, query, page=1, category=None):
         return [Book(id="123", title="A Book", author="An Author")]
 
     def details(self, book_id):
@@ -54,7 +54,9 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(claimed.json()["kindle_email"], "reader@kindle.com")
                 token = claimed.json()["token"]
                 auth = {"Authorization": f"Bearer {token}"}
-                self.assertEqual((await client.get("/v1/search", params={"q": "book"}, headers=auth)).status_code, 200)
+                search = await client.get("/v1/search", params={"q": "book", "category": "fantasy"}, headers=auth)
+                self.assertEqual(search.status_code, 200)
+                self.assertEqual(search.json()["category"], "fantasy")
                 delivery = await client.post(
                     "/v1/deliveries",
                     headers={"Authorization": f"Bearer {token}"},

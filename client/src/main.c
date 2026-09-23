@@ -1473,12 +1473,24 @@ static const gchar *display_relay_url(const gchar *value) {
     return value && g_str_has_prefix(value, "https://") ? value + 8 : (value ? value : "");
 }
 
-static void load_categories(App *app) {
+static gboolean load_categories(App *app) {
     AsyncTask *task;
-    if (!app->config->token || !*app->config->token) return;
+    if (!app->config->token || !*app->config->token) return FALSE;
     task = async_task_new(app, TASK_CATEGORIES);
     copy_common_task_fields(task, app);
-    start_async_task(task);
+    return start_async_task(task);
+}
+
+static void retry_categories_clicked(GtkButton *button, gpointer userdata) {
+    App *app = userdata;
+    if (app->catalog_ready || !app->page_window) return;
+    SettingsPage *page = g_object_get_data(G_OBJECT(app->page_window), "bookrelay-settings-page");
+    if (page) gtk_label_set_text(GTK_LABEL(page->feedback), "Загружаем категории…");
+    gtk_widget_set_sensitive(GTK_WIDGET(button), FALSE);
+    if (!load_categories(app)) {
+        if (page) gtk_label_set_text(GTK_LABEL(page->feedback), "Не удалось начать загрузку каталога. Повторите попытку.");
+        gtk_widget_set_sensitive(GTK_WIDGET(button), TRUE);
+    }
 }
 
 static gboolean poll_delivery(gpointer userdata) {
@@ -1568,6 +1580,7 @@ static void settings_clicked(GtkButton *button, gpointer userdata) {
     GtkWidget *code_label;
     GtkWidget *cancel_button;
     GtkWidget *connect_button;
+    GtkWidget *retry_button;
     SettingsPage *page;
 
     window = new_kindle_page(app, "Настройки", &body, &actions);
@@ -1626,13 +1639,18 @@ static void settings_clicked(GtkButton *button, gpointer userdata) {
 
     cancel_button = page_button(app->catalog_ready ? "Отмена" : "Выход");
     connect_button = page_button("Подключить");
+    retry_button = page_button("Повторить загрузку каталога");
     g_object_set_data(G_OBJECT(window), "bookrelay-settings-connect", connect_button);
+    g_object_set_data(G_OBJECT(window), "bookrelay-settings-retry", retry_button);
     ink_primary_button(connect_button);
     g_signal_connect(cancel_button, "clicked", G_CALLBACK(settings_page_cancel), page);
     g_signal_connect(connect_button, "clicked", G_CALLBACK(settings_page_connect), page);
+    g_signal_connect(retry_button, "clicked", G_CALLBACK(retry_categories_clicked), app);
     gtk_box_pack_start(GTK_BOX(actions), cancel_button, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(actions), connect_button, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(actions), retry_button, TRUE, TRUE, 0);
     gtk_widget_show_all(window);
+    gtk_widget_hide(retry_button);
     virtual_keyboard_show_for(page->keyboard, page->relay);
     gtk_window_set_focus(GTK_WINDOW(app->window), GTK_WIDGET(page->relay));
     g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, focus_widget_idle,
@@ -1682,6 +1700,20 @@ static gboolean async_task_complete(gpointer userdata) {
         case TASK_CATEGORIES:
             if (!task->categories) {
                 show_error(app, "Категории не загрузились", task->error);
+                if (app->page_window) {
+                    SettingsPage *page = g_object_get_data(G_OBJECT(app->page_window), "bookrelay-settings-page");
+                    if (page) {
+                        gchar *message = g_strdup_printf("Категории не загрузились: %s. Проверьте подключение и повторите.",
+                                                         task->error ? task->error->message : "relay не ответил");
+                        GtkWidget *retry = g_object_get_data(G_OBJECT(page->window), "bookrelay-settings-retry");
+                        gtk_label_set_text(GTK_LABEL(page->feedback), message);
+                        if (retry) {
+                            gtk_widget_show(retry);
+                            gtk_widget_set_sensitive(retry, TRUE);
+                        }
+                        g_free(message);
+                    }
+                }
             } else {
                 gboolean first_load = !app->catalog_ready;
                 if (app->catalog_categories) g_ptr_array_free(app->catalog_categories, TRUE);
@@ -1960,8 +1992,9 @@ static gboolean search_window_key_press(GtkWidget *widget, GdkEventKey *event, g
     cursor = gtk_editable_get_position(GTK_EDITABLE(app->query));
     gtk_widget_grab_focus(app->query);
     gtk_editable_select_region(GTK_EDITABLE(app->query), cursor, cursor);
-    /* Let GtkWindow propagate this same key event to its newly focused entry. */
-    return FALSE;
+    /* Route the key to the search entry after Kindle restores focus to the
+     * application window. Stop window dispatch once the entry handles it. */
+    return gtk_widget_event(app->query, (GdkEvent *)event);
 }
 
 static gboolean favorites_icon_pressed(GtkWidget *widget, GdkEventButton *event, gpointer userdata) {

@@ -22,6 +22,12 @@ class SourceUnavailable(Exception):
     pass
 
 
+def retryable_source_error(exc: Exception) -> bool:
+    # Missing books and covers will not appear on a second request. The OPDS
+    # host does intermittently fail with 5xx or a dropped connection.
+    return not isinstance(exc, HTTPError) or exc.code == 429 or exc.code >= 500
+
+
 def parse_feed_root(payload: bytes) -> ET.Element:
     try:
         root = ET.fromstring(payload)
@@ -98,7 +104,7 @@ def parse_search_page(page: str, base_url: str) -> list[Book]:
 
 
 class FlibustaSource:
-    def __init__(self, base_url: str = "https://flibusta.is", timeout: int = 20):
+    def __init__(self, base_url: str = "https://flibusta.is", timeout: int = 12):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self._feed_cache: OrderedDict[str, tuple[float, bytes]] = OrderedDict()
@@ -107,14 +113,16 @@ class FlibustaSource:
 
     def _get(self, path: str) -> bytes:
         request = Request(urljoin(self.base_url + "/", path.lstrip("/")), headers={"User-Agent": "BookRelay/0.1"})
-        try:
-            with urlopen(request, timeout=self.timeout) as response:
-                payload = response.read(25 * 1024 * 1024 + 1)
-                if len(payload) > 25 * 1024 * 1024:
-                    raise SourceUnavailable("Flibusta response exceeds 25 MiB")
-                return payload
-        except (HTTPError, URLError, OSError, TimeoutError, http.client.HTTPException) as exc:
-            raise SourceUnavailable("Flibusta did not respond; please retry") from exc
+        for attempt in range(2):
+            try:
+                with urlopen(request, timeout=self.timeout) as response:
+                    payload = response.read(25 * 1024 * 1024 + 1)
+                    if len(payload) > 25 * 1024 * 1024:
+                        raise SourceUnavailable("Flibusta response exceeds 25 MiB")
+                    return payload
+            except (HTTPError, URLError, OSError, TimeoutError, http.client.HTTPException) as exc:
+                if attempt or not retryable_source_error(exc):
+                    raise SourceUnavailable("Flibusta did not respond; please retry") from exc
 
     def search(self, query: str, page: int = 1, category: str | None = None) -> list[Book]:
         return self.search_page(query, page)[0]
@@ -162,6 +170,14 @@ class FlibustaSource:
             next_link = next((link.get("href") for link in root.findall(f"{ATOM}link") if link.get("rel") == "next"), None)
             return parse_opds_feed(payload, self.base_url)[1], next_link
 
+        for attempt in range(2):
+            try:
+                return self._stream_book_feed(path, needed)
+            except (HTTPError, URLError, OSError, TimeoutError, http.client.HTTPException) as exc:
+                if attempt or not retryable_source_error(exc):
+                    raise SourceUnavailable("Flibusta did not respond; please retry") from exc
+
+    def _stream_book_feed(self, path: str, needed: int) -> tuple[list[Book], str | None]:
         request = Request(urljoin(self.base_url + "/", path.lstrip("/")), headers={"User-Agent": "BookRelay/0.1"})
         parser = ET.XMLPullParser(events=("start", "end"))
         root = None
@@ -195,8 +211,6 @@ class FlibustaSource:
                                 root.remove(element)
                     if len(books) >= needed:
                         break
-        except (HTTPError, URLError, OSError, TimeoutError, http.client.HTTPException) as exc:
-            raise SourceUnavailable("Flibusta did not respond; please retry") from exc
         except ET.ParseError as exc:
             raise SourceUnavailable("Flibusta returned an invalid catalog") from exc
         if root is None:

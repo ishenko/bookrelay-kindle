@@ -39,7 +39,10 @@ def main(binary: Path) -> None:
         def do_GET(self):
             requests.append(("GET", self.path, None))
             if self.path == "/v1/categories":
-                self.reply(200, {"categories": []})
+                if sum(method == "GET" and path == "/v1/categories" for method, path, _ in requests) == 1:
+                    self.reply(503, {"detail": "temporary catalog failure"})
+                else:
+                    self.reply(200, {"categories": []})
             elif urlsplit(self.path).path == "/v1/search":
                 self.reply(200, {"items": [{"id": "123", "title": "A Book", "author": "An Author", "year": 2022}], "page": 1, "has_next": True})
             else:
@@ -55,6 +58,7 @@ def main(binary: Path) -> None:
         with tempfile.TemporaryDirectory() as directory:
             environment = os.environ.copy()
             environment["BOOKRELAY_TEST_PAIR_URL"] = f"http://127.0.0.1:{server.server_port}"
+            environment["BOOKRELAY_TEST_CATEGORY_RETRY"] = "1"
             result = subprocess.run(
                 ["xvfb-run", "-a", "-s", "-screen 0 1264x1680x24", str(binary), directory],
                 env=environment, timeout=20, capture_output=True, text=True,
@@ -72,7 +76,7 @@ def main(binary: Path) -> None:
         ("PUT", "/v1/devices/me", {"kindle_email": "reader@kindle.com"}),
         ("PUT", "/v1/devices/me", {"kindle_email": "reader@kindle.com"}),
     ], requests
-    assert ("GET", "/v1/categories", None) in requests, requests
+    assert len([request for request in requests if request == ("GET", "/v1/categories", None)]) == 2, requests
     searches = [parse_qs(urlsplit(path).query) for method, path, _ in requests
                 if method == "GET" and urlsplit(path).path == "/v1/search"]
     assert searches == [{"q": ["test book"], "page": ["1"], "size": ["12"]}], requests

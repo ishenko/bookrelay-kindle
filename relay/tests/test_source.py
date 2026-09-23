@@ -1,11 +1,51 @@
 import unittest
 from http.client import IncompleteRead
+from urllib.error import HTTPError
 from unittest.mock import patch
 
 from bookrelay.source.flibusta import FlibustaSource, SourceUnavailable, parse_opds_feed, parse_search_page
 
 
 class FlibustaParserTests(unittest.TestCase):
+    def test_transient_upstream_failure_retries_catalog_and_streamed_books(self):
+        feed = (b'<feed xmlns="http://www.w3.org/2005/Atom">'
+                b'<entry><title>Book</title><link rel="http://opds-spec.org/acquisition/open-access" '
+                b'href="/b/123/epub" /></entry></feed>')
+
+        class Response:
+            def __init__(self):
+                self.reads = 0
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self, limit):
+                return feed
+
+            def read1(self, limit):
+                self.reads += 1
+                return feed if self.reads == 1 else b''
+
+        failure = HTTPError('https://flibusta.is/opds/genres', 503, 'temporarily unavailable', {}, None)
+        with patch('bookrelay.source.flibusta.urlopen', side_effect=[failure, Response()]) as fetch:
+            self.assertEqual(FlibustaSource().categories(), [])
+            self.assertEqual(fetch.call_count, 2)
+        with patch('bookrelay.source.flibusta.urlopen', side_effect=[failure, Response()]) as fetch:
+            books, more = FlibustaSource().catalog_books('/opds/genres/A', '/opds/genres/A/1', 1, 12)
+            self.assertEqual([book.id for book in books], ['123'])
+            self.assertFalse(more)
+            self.assertEqual(fetch.call_count, 2)
+
+    def test_missing_upstream_page_is_not_retried(self):
+        failure = HTTPError('https://flibusta.is/opds/genres/A', 404, 'not found', {}, None)
+        with patch('bookrelay.source.flibusta.urlopen', side_effect=failure) as fetch:
+            with self.assertRaises(SourceUnavailable):
+                FlibustaSource().subcategories('/opds/genres/A')
+            self.assertEqual(fetch.call_count, 1)
+
     def test_truncated_catalog_connection_is_source_outage(self):
         class TruncatedResponse:
             def __enter__(self):

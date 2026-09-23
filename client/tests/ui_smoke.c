@@ -177,6 +177,17 @@ int main(int argc, char **argv) {
             g_error("claim token was not saved before email update failed");
         bookrelay_config_free(saved);
         g_signal_emit_by_name(settings->code, "activate");
+        if (g_getenv("BOOKRELAY_TEST_CATEGORY_RETRY")) {
+            gint64 deadline = g_get_monotonic_time() + 10 * G_USEC_PER_SEC;
+            GtkWidget *retry = g_object_get_data(G_OBJECT(settings->window), "bookrelay-settings-retry");
+            while (!GTK_WIDGET_VISIBLE(retry) && g_get_monotonic_time() < deadline) {
+                drain_events();
+                g_usleep(10000);
+            }
+            if (!GTK_WIDGET_VISIBLE(retry) || !strstr(gtk_label_get_text(GTK_LABEL(settings->feedback)), "Категории не загрузились"))
+                g_error("catalog failure was not shown on the settings page");
+            gtk_button_clicked(GTK_BUTTON(retry));
+        }
         wait_for_pairing(&app, FALSE);
         saved = bookrelay_config_load(app.config_path);
         if (g_strcmp0(saved->kindle_email, "reader@kindle.com") != 0)
@@ -197,6 +208,17 @@ int main(int argc, char **argv) {
         drain_events();
         if (g_strcmp0(gtk_entry_get_text(GTK_ENTRY(app.query)), "test book") != 0)
             g_error("typed search query did not reach the entry");
+        /* Kindle can leave X focus on the application window. Its next key
+         * still needs to reach the visible search entry. */
+        gtk_window_set_focus(GTK_WINDOW(app.window), NULL);
+        drain_events();
+        if (!gdk_test_simulate_key(app.window->window, 12, 12, GDK_x, 0, GDK_KEY_PRESS) ||
+            !gdk_test_simulate_key(app.window->window, 12, 12, GDK_x, 0, GDK_KEY_RELEASE))
+            g_error("could not send search key after focus loss");
+        drain_events();
+        if (g_strcmp0(gtk_entry_get_text(GTK_ENTRY(app.query)), "test bookx") != 0)
+            g_error("search lost key after Kindle restored window focus");
+        gtk_entry_set_text(GTK_ENTRY(app.query), "test book");
         tap_search_icon(&app);
         {
             gint64 deadline = g_get_monotonic_time() + 10 * G_USEC_PER_SEC;

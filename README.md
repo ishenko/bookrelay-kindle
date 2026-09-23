@@ -58,7 +58,7 @@ After a new GitHub Release, update the installed package with:
 
 To prepare the package offline, copy the whole bookrelay-kpm folder from the
 release files to the Kindle USB root. It must contain manifest.json and
-packages/bookrelay-kindle_0.1.16_kindlehf.kpkg. Then run:
+packages/bookrelay-kindle_0.1.17_kindlehf.kpkg. Then run:
 
     kpm add-repo file:///mnt/us/bookrelay-kpm/manifest.json
     kpm update

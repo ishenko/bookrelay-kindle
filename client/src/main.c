@@ -1916,12 +1916,14 @@ static void search_icon_clicked(GtkButton *button, gpointer userdata) {
     update_pager(app);
     gtk_widget_hide(app->header_title);
     gtk_widget_show(app->search_row);
-    /* Match the working setup form: open the Kindle keyboard before focusing
-     * its entry. Opening it from focus-in can steal the new entry's input. */
+    /* Unlike the setup form, this entry was hidden until the search icon was
+     * released. Map and focus it before asking Kindle to open its keyboard;
+     * otherwise Kindle can bind input to the previously focused widget. */
+    gtk_widget_grab_focus(app->query);
     virtual_keyboard_show_for(g_object_get_data(G_OBJECT(app->keyboard),
                                                 "bookrelay-keyboard-state"),
                               GTK_ENTRY(app->query));
-    /* Reassert focus once the toolbar release and keyboard open have settled. */
+    /* The native keyboard can briefly take X focus while opening. */
     gtk_window_set_focus(GTK_WINDOW(app->window), app->query);
     g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, focus_widget_idle,
                     g_object_ref(app->query), g_object_unref);

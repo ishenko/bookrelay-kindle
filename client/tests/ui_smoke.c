@@ -194,8 +194,13 @@ int main(int argc, char **argv) {
             g_error("email was not saved after retry without a code");
         bookrelay_config_free(saved);
         tap_search_icon(&app);
+        if (!GTK_WIDGET_MAPPED(app.query))
+            g_error("search entry is not mapped when Kindle keyboard opens");
         if (gtk_window_get_focus(GTK_WINDOW(app.window)) != app.query)
             g_error("search did not focus after pairing");
+        if (g_getenv("BOOKRELAY_TEST_NATIVE_SEARCH") &&
+            !((VirtualKeyboard *)g_object_get_data(G_OBJECT(app.keyboard), "bookrelay-keyboard-state"))->native_open)
+            g_error("native keyboard did not open for search");
         {
             const gchar *character;
             for (character = "test book"; *character; character++) {

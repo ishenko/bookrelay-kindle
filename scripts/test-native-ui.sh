@@ -29,3 +29,4 @@ BOOKRELAY_TEST_DPI=300 BOOKRELAY_TEST_NATIVE=1 BOOKRELAY_KEYBOARD=kindle \
   xvfb-run -a -s '-screen 0 1264x1680x24' "$output_dir/ui-smoke" "$output_dir/native-keyboard"
 grep -Fqx -- '-s com.lab126.keyboard open bookrelay.kindle:abc:0' "$output_dir/lipc-trace.txt"
 grep -Fqx -- '-s com.lab126.keyboard close bookrelay.kindle' "$output_dir/lipc-trace.txt"
+BOOKRELAY_TEST_NATIVE_SEARCH=1 BOOKRELAY_KEYBOARD=kindle BOOKRELAY_LIPC_SET_PROP="$output_dir/lipc-mock.sh" BOOKRELAY_LIPC_TRACE="$output_dir/lipc-trace.txt" python3 client/tests/test_ui_pairing.py "$output_dir/ui-smoke"

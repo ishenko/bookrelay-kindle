@@ -23,8 +23,10 @@ typedef struct {
     gchar *title;
 } BookRelayCategory;
 
-GPtrArray *bookrelay_api_search(const gchar *base_url, const gchar *token, const gchar *query, const gchar *category, gint page, GError **error);
+GPtrArray *bookrelay_api_search(const gchar *base_url, const gchar *token, const gchar *query, const gchar *category, gint page, gint size, gboolean *has_next, GError **error);
 GPtrArray *bookrelay_api_categories(const gchar *base_url, const gchar *token, GError **error);
+GPtrArray *bookrelay_api_subcategories(const gchar *base_url, const gchar *token, const gchar *category, GError **error);
+GPtrArray *bookrelay_api_catalog_books(const gchar *base_url, const gchar *token, const gchar *category, const gchar *subcategory, gint page, gint size, gboolean *has_next, GError **error);
 BookRelayBook *bookrelay_api_book(const gchar *base_url, const gchar *token, const gchar *book_id, GError **error);
 BookRelayClaim *bookrelay_api_pair_claim(const gchar *base_url, const gchar *code, GError **error);
 gchar *bookrelay_api_send(const gchar *base_url, const gchar *token, const gchar *book_id, const gchar *title, GError **error);

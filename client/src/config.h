@@ -7,7 +7,6 @@ typedef struct {
     gchar *relay_url;
     gchar *kindle_email;
     gchar *token;
-    gboolean auto_download;
 } BookRelayConfig;
 
 BookRelayConfig *bookrelay_config_load(const gchar *path);

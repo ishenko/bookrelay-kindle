@@ -127,13 +127,36 @@ def create_app(db_path: Path | str | None = None, source=None, mailer=None, pair
         require_device(authorization)
         return source.categories()
 
+    @app.get("/v1/subcategories")
+    def subcategories(request: Request, category: str = Query(max_length=500), authorization: str | None = Header(default=None)):
+        limit(request, "subcategories", 60, 60)
+        require_device(authorization)
+        try:
+            return source.subcategories(category)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get("/v1/catalog/books")
+    def catalog_books(request: Request, category: str = Query(max_length=500), subcategory: str = Query(max_length=500), page: int = Query(default=1, ge=1, le=100), size: int = Query(default=6, ge=4, le=12), authorization: str | None = Header(default=None)):
+        limit(request, "catalog-books", 60, 60)
+        require_device(authorization)
+        try:
+            books, has_next = source.catalog_books(category, subcategory, page, size)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {"items": [book.to_dict() for book in books], "page": page, "has_next": has_next}
+
     @app.get("/v1/search")
-    def search(request: Request, q: str = Query(default="", max_length=200), category: str | None = Query(default=None, max_length=64), page: int = Query(default=1, ge=1, le=100), authorization: str | None = Header(default=None)):
+    def search(request: Request, q: str = Query(default="", max_length=200), category: str | None = Query(default=None, max_length=64), page: int = Query(default=1, ge=1, le=100), size: int = Query(default=6, ge=4, le=12), authorization: str | None = Header(default=None)):
         limit(request, "search", 60, 60)
         require_device(authorization)
         if not q.strip() and not category:
             raise HTTPException(status_code=400, detail="query or category is required")
-        return {"items": [book.to_dict() for book in source.search(q, page, category)], "page": page, "query": q, "category": category}
+        if hasattr(source, "search_page") and not category:
+            books, has_next = source.search_page(q, page, size)
+        else:
+            books, has_next = source.search(q, page, category), False
+        return {"items": [book.to_dict() for book in books], "page": page, "query": q, "category": category, "has_next": has_next}
 
     @app.get("/v1/books/{book_id}")
     def book_details(book_id: str, authorization: str | None = Header(default=None)):

@@ -13,7 +13,7 @@ const books = [
   { id: 'twelve', title: 'Двенадцать стульев', author: 'Илья Ильф и Евгений Петров', category: 'Классика', year: 1928, cover: 'cover-green', description: 'Остап Бендер и Киса Воробьянинов отправляются на поиски сокровищ, спрятанных в одном из стульев.' },
 ];
 
-const state = { query: '', category: 'all', page: 1, pageSize: 6, paired: false, relayUrl: 'https://relay.example.com', pairingCode: '', email: 'reader@example.com', autoDownload: false, delivery: {} };
+const state = { query: '', category: 'all', page: 1, pageSize: 6, paired: false, relayUrl: 'https://relay.example.com', pairingCode: '', email: 'reader@example.com', delivery: {} };
 const $ = (selector) => document.querySelector(selector);
 const escapeHtml = (value) => String(value).replace(/[&<>\"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', "'": '&#039;' }[char]));
 
@@ -93,9 +93,9 @@ function openPairing() {
 }
 
 function openSettings() {
-  openModal('<div class="modal-header"><div><p class="eyebrow">ЛОКАЛЬНАЯ КОНФИГУРАЦИЯ</p><h2>Настройки</h2><p class="modal-subtitle">Настройки сохраняются на Kindle</p></div><button class="close-button" type="button" aria-label="Закрыть">×</button></div><label class="field">RELAY URL<input id="relay-url" value="' + escapeHtml(state.relayUrl) + '" spellcheck="false"></label><div class="toggle-row"><span>Автоматически отправлять новые книги</span><input id="auto-download" class="toggle" type="checkbox" ' + (state.autoDownload ? 'checked' : '') + '></div><p class="helper">Kindle Email и SMTP задаются на VPS. В preview relay не вызывается: кнопка имитирует только пользовательский сценарий.</p><div class="modal-actions"><button class="outline-button close-action" type="button">Отмена</button><button class="ink-button save-settings" type="button">Сохранить</button></div>');
+  openModal('<div class="modal-header"><div><p class="eyebrow">ЛОКАЛЬНАЯ КОНФИГУРАЦИЯ</p><h2>Настройки</h2><p class="modal-subtitle">Настройки сохраняются на Kindle</p></div><button class="close-button" type="button" aria-label="Закрыть">×</button></div><label class="field">RELAY URL<input id="relay-url" value="' + escapeHtml(state.relayUrl) + '" spellcheck="false"></label><p class="helper">Kindle Email и SMTP задаются на VPS. В preview relay не вызывается: кнопка имитирует только пользовательский сценарий.</p><div class="modal-actions"><button class="outline-button close-action" type="button">Отмена</button><button class="ink-button save-settings" type="button">Сохранить</button></div>');
   $('.close-action')?.addEventListener('click', closeModal);
-  $('.save-settings')?.addEventListener('click', () => { state.relayUrl = $('#relay-url').value || state.relayUrl; state.autoDownload = $('#auto-download').checked; closeModal(); setStatus('Настройки сохранены'); if (state.paired) $('#connection-status').textContent = 'Kindle подключён'; });
+  $('.save-settings')?.addEventListener('click', () => { state.relayUrl = $('#relay-url').value || state.relayUrl; closeModal(); setStatus('Настройки сохранены'); if (state.paired) $('#connection-status').textContent = 'Kindle подключён'; });
 }
 
 function openExitConfirmation() {

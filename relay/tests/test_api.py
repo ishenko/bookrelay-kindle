@@ -32,6 +32,16 @@ class FakeSource:
     def categories(self):
         return [{"id": "new", "title": "New"}]
 
+    def subcategories(self, category):
+        if category != "new":
+            raise ValueError("unknown category")
+        return [{"id": "new/fantasy", "title": "Fantasy"}]
+
+    def catalog_books(self, category, subcategory, page=1, size=6):
+        if (category, subcategory) != ("new", "new/fantasy"):
+            raise ValueError("unknown subcategory")
+        return ([Book(id="123", title="A Book", author="An Author", year=2022)] if page == 1 else []), False
+
 
 class FakeMailer:
     def __init__(self):
@@ -42,6 +52,23 @@ class FakeMailer:
 
 
 class ApiTests(unittest.IsolatedAsyncioTestCase):
+    async def test_catalog_navigation_and_empty_page(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app = create_app(Path(tmp) / "relay.sqlite3", source=FakeSource(), mailer=FakeMailer(), pairing_admin_key="test-owner-key")
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+                start = await client.post("/v1/pair/start", json={"device_id": "pw12", "kindle_email": "reader@kindle.com", "admin_key": "test-owner-key"})
+                token = (await client.post("/v1/pair/claim", json={"code": start.json()["code"]})).json()["token"]
+                headers = {"Authorization": f"Bearer {token}"}
+                categories = await client.get("/v1/categories", headers=headers)
+                subcategories = await client.get("/v1/subcategories", params={"category": "new"}, headers=headers)
+                books = await client.get("/v1/catalog/books", params={"category": "new", "subcategory": "new/fantasy", "page": 1}, headers=headers)
+                empty = await client.get("/v1/catalog/books", params={"category": "new", "subcategory": "new/fantasy", "page": 2}, headers=headers)
+                self.assertEqual(categories.json(), [{"id": "new", "title": "New"}])
+                self.assertEqual(subcategories.json(), [{"id": "new/fantasy", "title": "Fantasy"}])
+                self.assertEqual(books.json()["items"][0]["year"], 2022)
+                self.assertEqual(empty.json()["items"], [])
+                self.assertFalse(empty.json()["has_next"])
+
     async def test_pair_search_and_authenticated_delivery(self):
         with tempfile.TemporaryDirectory() as tmp:
             app = create_app(Path(tmp) / "relay.sqlite3", source=FakeSource(), mailer=FakeMailer(), pairing_admin_key="test-owner-key", delivery_enabled=True)

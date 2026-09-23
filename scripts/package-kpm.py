@@ -29,6 +29,10 @@ def main():
         for name in PACKAGE_FILES:
             archive.add(Path("packaging/kpm") / name, arcname=name)
         archive.add(args.binary, arcname="bookrelay-kindle")
+        for cover in sorted(Path("client/share/covers").glob("*.jpg")):
+            archive.add(cover, arcname=f"share/covers/{cover.name}")
+        for icon in sorted(Path("client/share/icons").glob("*.png")):
+            archive.add(icon, arcname=f"share/icons/{icon.name}")
 
 
 if __name__ == "__main__":

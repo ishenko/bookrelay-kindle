@@ -157,6 +157,14 @@ static gchar *json_string(const gchar *object, const gchar *key) {
     return result;
 }
 
+static gint json_int(const gchar *object, const gchar *key) {
+    gchar *needle = g_strdup_printf("\"%s\":", key);
+    const gchar *found = strstr(object, needle);
+    gint value = found ? (gint)g_ascii_strtoll(found + strlen(needle), NULL, 10) : 0;
+    g_free(needle);
+    return value;
+}
+
 static GPtrArray *parse_books(const gchar *json) {
     GPtrArray *books = g_ptr_array_new_with_free_func((GDestroyNotify)bookrelay_book_free);
     const gchar *cursor = json;
@@ -173,6 +181,7 @@ static GPtrArray *parse_books(const gchar *json) {
         book->cover_url = json_string(object, "cover_url");
         book->description = json_string(object, "description");
         book->translator = json_string(object, "translator");
+        book->year = json_int(object, "year");
         g_ptr_array_add(books, book);
         g_free(object);
         cursor = end + 1;
@@ -184,17 +193,53 @@ static gchar *join_url(const gchar *base, const gchar *path) {
     return g_strdup_printf("%s/%s", base, path[0] == '/' ? path + 1 : path);
 }
 
-GPtrArray *bookrelay_api_search(const gchar *base_url, const gchar *token, const gchar *query, const gchar *category, gint page, GError **error) {
+GPtrArray *bookrelay_api_search(const gchar *base_url, const gchar *token, const gchar *query, const gchar *category, gint page, gint size, gboolean *has_next, GError **error) {
     gchar *encoded = url_encode(query);
     gchar *encoded_category = category && *category ? url_encode(category) : NULL;
     gchar *endpoint = join_url(base_url, "/v1/search");
     gchar *url = encoded_category
-        ? g_strdup_printf("%s?q=%s&category=%s&page=%d", endpoint, encoded, encoded_category, page)
-        : g_strdup_printf("%s?q=%s&page=%d", endpoint, encoded, page);
+        ? g_strdup_printf("%s?q=%s&category=%s&page=%d&size=%d", endpoint, encoded, encoded_category, page, size)
+        : g_strdup_printf("%s?q=%s&page=%d&size=%d", endpoint, encoded, page, size);
     long status;
     gchar *body = request("GET", url, token, NULL, &status, error);
     GPtrArray *books = body ? parse_books(body) : NULL;
+    if (has_next) *has_next = body && strstr(body, "\"has_next\":true") != NULL;
     g_free(encoded); g_free(encoded_category); g_free(endpoint); g_free(url); g_free(body);
+    return books;
+}
+
+GPtrArray *bookrelay_api_subcategories(const gchar *base_url, const gchar *token, const gchar *category, GError **error) {
+    gchar *encoded = url_encode(category);
+    gchar *endpoint = join_url(base_url, "/v1/subcategories");
+    gchar *url = g_strdup_printf("%s?category=%s", endpoint, encoded);
+    long status;
+    gchar *body = request("GET", url, token, NULL, &status, error);
+    GPtrArray *items = body ? g_ptr_array_new_with_free_func((GDestroyNotify)bookrelay_category_free) : NULL;
+    const gchar *cursor = body;
+    while (items && (cursor = strstr(cursor, "\"id\":\"")) != NULL) {
+        const gchar *end = strchr(cursor, '}');
+        BookRelayCategory *item;
+        if (!end) break;
+        item = g_new0(BookRelayCategory, 1);
+        item->id = json_string(cursor, "id");
+        item->title = json_string(cursor, "title");
+        g_ptr_array_add(items, item);
+        cursor = end + 1;
+    }
+    g_free(encoded); g_free(endpoint); g_free(url); g_free(body);
+    return items;
+}
+
+GPtrArray *bookrelay_api_catalog_books(const gchar *base_url, const gchar *token, const gchar *category, const gchar *subcategory, gint page, gint size, gboolean *has_next, GError **error) {
+    gchar *encoded_category = url_encode(category);
+    gchar *encoded_subcategory = url_encode(subcategory);
+    gchar *endpoint = join_url(base_url, "/v1/catalog/books");
+    gchar *url = g_strdup_printf("%s?category=%s&subcategory=%s&page=%d&size=%d", endpoint, encoded_category, encoded_subcategory, page, size);
+    long status;
+    gchar *body = request("GET", url, token, NULL, &status, error);
+    GPtrArray *books = body ? parse_books(body) : NULL;
+    if (has_next) *has_next = body && strstr(body, "\"has_next\":true") != NULL;
+    g_free(encoded_category); g_free(encoded_subcategory); g_free(endpoint); g_free(url); g_free(body);
     return books;
 }
 
@@ -232,6 +277,7 @@ BookRelayBook *bookrelay_api_book(const gchar *base_url, const gchar *token, con
         book->cover_url = json_string(body, "cover_url");
         book->description = json_string(body, "description");
         book->translator = json_string(body, "translator");
+        book->year = json_int(body, "year");
     }
     g_free(path); g_free(url); g_free(body);
     return book;

@@ -13,6 +13,7 @@
 #define KINDLE_APP_WINDOW_TITLE "L:A_N:application_PC:T_ID:bookrelay.kindle"
 #define KINDLE_DIALOG_WINDOW_TITLE "L:D_N:dialog_M:dismissable_ID:bookrelay.kindle.dialog"
 #define MAX_COVER_CACHE_BYTES (64u * 1024u * 1024u)
+#define MAX_PENDING_COVERS 36u
 
 typedef struct {
     BookRelayConfig *config;
@@ -45,6 +46,9 @@ typedef struct {
     guint page;
     guint active_tasks;
     guint generation;
+    gint cover_generation;
+    guint pending_covers;
+    GQueue deferred_covers;
     guint view;
     gboolean has_next;
     gboolean catalog_ready;
@@ -681,7 +685,15 @@ static AsyncTask *async_task_new(App *app, TaskKind kind) {
     task->kind = kind;
     task->generation = app->generation;
     app->active_tasks++;
+    if (kind == TASK_COVER) app->pending_covers++;
     return task;
+}
+
+static void advance_generation(App *app) {
+    while (!g_queue_is_empty(&app->deferred_covers))
+        async_task_free(g_queue_pop_head(&app->deferred_covers));
+    app->generation++;
+    g_atomic_int_set(&app->cover_generation, (gint)app->generation);
 }
 
 static gpointer async_task_worker(gpointer userdata) {
@@ -712,7 +724,10 @@ static gpointer async_task_worker(gpointer userdata) {
             task->state = bookrelay_api_delivery_status(task->base_url, task->token, task->job_id, &task->error);
             break;
         case TASK_COVER:
-            bookrelay_api_download(task->base_url, task->token, task->url, &task->cover_bytes, &task->error);
+            /* Skip queued covers from pages the reader has already left.
+             * GTK widgets are only released later on the main thread. */
+            if (task->generation == (guint)g_atomic_int_get(&task->app->cover_generation))
+                bookrelay_api_download(task->base_url, task->token, task->url, &task->cover_bytes, &task->error);
             break;
     }
     g_idle_add(async_task_complete, task);
@@ -738,6 +753,7 @@ static gboolean start_async_task(AsyncTask *task) {
         }
         if (pool_error) g_error_free(pool_error);
         task->app->active_tasks--;
+        task->app->pending_covers--;
         async_task_free(task);
         return FALSE;
     }
@@ -757,6 +773,15 @@ static gboolean start_async_task(AsyncTask *task) {
     g_thread_unref(thread);
 #endif
     return TRUE;
+}
+
+static void start_deferred_covers(App *app) {
+    while (app->pending_covers < MAX_PENDING_COVERS && !g_queue_is_empty(&app->deferred_covers)) {
+        AsyncTask *task = g_queue_pop_head(&app->deferred_covers);
+        app->active_tasks++;
+        app->pending_covers++;
+        start_async_task(task);
+    }
 }
 
 static void copy_common_task_fields(AsyncTask *task, App *app) {
@@ -889,7 +914,10 @@ static GtkWidget *make_cover(App *app, BookRelayBook *book, gint cover_width) {
         gtk_widget_hide(placeholder);
         g_object_unref(pixbuf);
     } else if (book->cover_url && *book->cover_url) {
-        AsyncTask *task = async_task_new(app, TASK_COVER);
+        AsyncTask *task = g_new0(AsyncTask, 1);
+        task->app = app;
+        task->kind = TASK_COVER;
+        task->generation = app->generation;
         copy_common_task_fields(task, app);
         task->book_id = g_strdup(book->id);
         task->url = g_strdup(book->cover_url);
@@ -898,7 +926,15 @@ static GtkWidget *make_cover(App *app, BookRelayBook *book, gint cover_width) {
         task->image = g_object_ref(image);
         task->placeholder = g_object_ref(placeholder);
         gtk_widget_show(placeholder);
-        start_async_task(task);
+        if (app->pending_covers >= MAX_PENDING_COVERS) {
+            /* Keep only the visible page waiting; leaving it releases these
+             * widget references in advance_generation(). */
+            g_queue_push_tail(&app->deferred_covers, task);
+        } else {
+            app->active_tasks++;
+            app->pending_covers++;
+            start_async_task(task);
+        }
     } else {
         gtk_widget_show(placeholder);
     }
@@ -1339,7 +1375,7 @@ static void search_page(App *app, guint page) {
     app->view = VIEW_SEARCH;
     app->page = page;
     app->has_next = FALSE;
-    app->generation++;
+    advance_generation(app);
     gtk_widget_hide(app->header_title);
     gtk_widget_show(app->search_row);
     gtk_label_set_text(GTK_LABEL(app->section_title), "Результаты поиска");
@@ -1418,7 +1454,7 @@ static void navigate_view(App *app, guint view, guint page) {
     app->view = view;
     app->page = page;
     app->has_next = FALSE;
-    app->generation++;
+    advance_generation(app);
     gtk_widget_hide(app->search_row);
     gtk_widget_show(app->header_title);
     if (app->keyboard)
@@ -1502,7 +1538,7 @@ static gboolean poll_delivery(gpointer userdata) {
     copy_common_task_fields(task, poll->app);
     task->job_id = g_strdup(poll->job_id);
     task->delivery_poll = poll;
-    start_async_task(task);
+    if (!start_async_task(task)) poll->request_pending = FALSE;
     return TRUE;
 }
 
@@ -1894,8 +1930,10 @@ static gboolean async_task_complete(gpointer userdata) {
             }
             break;
     }
+    if (task->kind == TASK_COVER && app->pending_covers > 0) app->pending_covers--;
     if (app->active_tasks > 0) app->active_tasks--;
     async_task_free(task);
+    start_deferred_covers(app);
     return FALSE;
 }
 
@@ -1912,7 +1950,7 @@ static void search_icon_clicked(GtkButton *button, gpointer userdata) {
     app->view = VIEW_SEARCH;
     app->page = 1;
     app->has_next = FALSE;
-    app->generation++;
+    advance_generation(app);
     gtk_label_set_text(GTK_LABEL(app->section_title), "Поиск книг");
     gtk_widget_hide(app->breadcrumb_row);
     clear_results(app);

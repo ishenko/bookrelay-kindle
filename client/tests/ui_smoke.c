@@ -492,6 +492,32 @@ int main(int argc, char **argv) {
                 g_usleep(10000);
             }
             if (app.active_tasks) g_error("bounded cover downloads timed out");
+            /* Rapidly leave pages while the cover pool is busy. The backlog
+             * stays bounded and the newest page eventually receives covers. */
+            for (guint page = 0; page < 8; page++) {
+                GPtrArray *rapid = g_ptr_array_new_with_free_func((GDestroyNotify)bookrelay_book_free);
+                advance_generation(&app);
+                for (guint n = 0; n < 12; n++) {
+                    BookRelayBook *item = g_new0(BookRelayBook, 1);
+                    item->id = g_strdup_printf("%u", 1100 + page * 12 + n);
+                    item->title = g_strdup("Rapid page cover");
+                    item->cover_url = g_strdup_printf("/v1/books/%s/cover?path=%%2Fi%%2F98%%2F%s%%2Fcover.jpg", item->id, item->id);
+                    g_ptr_array_add(rapid, item);
+                }
+                render_books(&app, rapid);
+                if (app.pending_covers > MAX_PENDING_COVERS || g_queue_get_length(&app.deferred_covers) > 12)
+                    g_error("cover queue grew beyond the bounded backlog");
+                g_ptr_array_free(rapid, TRUE);
+            }
+            deadline = g_get_monotonic_time() + 12 * G_USEC_PER_SEC;
+            while (app.active_tasks && g_get_monotonic_time() < deadline) {
+                drain_events();
+                g_usleep(10000);
+            }
+            if (app.active_tasks || app.pending_covers || !g_queue_is_empty(&app.deferred_covers) ||
+                !find_cover_image(app.results))
+                g_error("covers on the latest page did not finish after rapid navigation");
+            snapshot(&app, argv[1], "book-list-after-rapid-navigation.png");
             render_books(&app, books);
             g_ptr_array_free(many, TRUE);
             button = find_data_button(app.results, "book-row");

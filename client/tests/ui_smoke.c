@@ -185,7 +185,18 @@ int main(int argc, char **argv) {
         tap_search_icon(&app);
         if (gtk_window_get_focus(GTK_WINDOW(app.window)) != app.query)
             g_error("search did not focus after pairing");
-        gtk_entry_set_text(GTK_ENTRY(app.query), "test book");
+        {
+            const gchar *character;
+            for (character = "test book"; *character; character++) {
+                guint key = *character == ' ' ? GDK_space : (guint)*character;
+                if (!gdk_test_simulate_key(app.query->window, 12, 12, key, 0, GDK_KEY_PRESS) ||
+                    !gdk_test_simulate_key(app.query->window, 12, 12, key, 0, GDK_KEY_RELEASE))
+                    g_error("could not type a search query");
+            }
+        }
+        drain_events();
+        if (g_strcmp0(gtk_entry_get_text(GTK_ENTRY(app.query)), "test book") != 0)
+            g_error("typed search query did not reach the entry");
         tap_search_icon(&app);
         {
             gint64 deadline = g_get_monotonic_time() + 10 * G_USEC_PER_SEC;

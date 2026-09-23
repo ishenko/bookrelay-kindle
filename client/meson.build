@@ -1,4 +1,4 @@
-project('bookrelay-kindle-client', 'c', version: '0.1.13', default_options: ['c_std=c11', 'warning_level=2'])
+project('bookrelay-kindle-client', 'c', version: '0.1.14', default_options: ['c_std=c11', 'warning_level=2'])
 gtk = dependency('gtk+-2.0')
 curl = dependency('libcurl')
 glib = dependency('glib-2.0')

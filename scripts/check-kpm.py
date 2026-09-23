@@ -10,7 +10,7 @@ from pathlib import Path
 manifest = json.loads(Path("packaging/kpm/manifest.json").read_text())
 assert manifest["manifest_version"] == 2
 assert manifest["id"] == "bookrelay-kindle"
-assert manifest["version"] == [0, 1, 9]
+assert manifest["version"] == [0, 1, 10]
 assert manifest["supported_platforms"] == ["kindlehf"]
 assert manifest["bookrelay_min_firmware"] == "5.19.0"
 for name in ("launch.sh", "install.sh", "uninstall.sh"):
@@ -43,7 +43,7 @@ while offset < len(icon):
     offset = end
 assert chunks[0][0] == b"IHDR" and chunks[-1][0] == b"IEND"
 width, height, depth, color = struct.unpack_from(">IIBB", chunks[0][1])
-assert (width, height, depth, color) == (256, 256, 8, 2)
+assert (width, height, depth, color) == (256, 384, 8, 2)
 pixels = zlib.decompress(b"".join(data for kind, data in chunks if kind == b"IDAT"))
 stride = 1 + width * 3
 assert len(pixels) == height * stride, "invalid PNG pixel data"

@@ -123,26 +123,25 @@ int main(int argc, char **argv) {
     settings = g_object_get_data(G_OBJECT(app.page_window), "bookrelay-settings-page");
     if (!settings) g_error("setup screen did not open on first launch");
     if (g_getenv("BOOKRELAY_TEST_NATIVE")) {
-        gint actions_y, keyboard_y;
         GtkWidget *actions = g_object_get_data(G_OBJECT(settings->window), "bookrelay-page-actions");
         if (!settings->keyboard->native_open)
             g_error("Kindle keyboard open command failed");
-        if (!GTK_WIDGET_VISIBLE(settings->keyboard->native_spacer))
-            g_error("Kindle keyboard space was not reserved");
-        if (!gtk_widget_translate_coordinates(actions, app.window, 0, 0, NULL, &actions_y) ||
-            !gtk_widget_translate_coordinates(settings->keyboard->root, app.window, 0, 0, NULL, &keyboard_y) ||
-            actions_y >= keyboard_y)
-            g_error("settings actions should remain above Kindle keyboard: actions y=%d, keyboard y=%d",
-                    actions_y, keyboard_y);
+        if (GTK_WIDGET_VISIBLE(settings->keyboard->root))
+            g_error("native keyboard must not reserve a blank area in the page");
         expect_inside_window(&app, actions, "settings actions with Kindle keyboard");
         snapshot(&app, argv[1], "settings-native.png");
-        press_key(settings->keyboard->root, "Клавиатура BookRelay");
-        if (!GTK_WIDGET_VISIBLE(g_ptr_array_index(settings->keyboard->letter_buttons, 0)))
-            g_error("built-in keyboard fallback did not open");
-        if (settings->keyboard->native_open) g_error("Kindle keyboard did not close");
-        press_key(settings->keyboard->root, "https://");
-        if (g_strcmp0(gtk_entry_get_text(settings->relay), "https://") != 0)
-            g_error("keyboard fallback cannot enter HTTPS");
+        g_signal_emit_by_name(settings->relay, "activate");
+        if (settings->keyboard->native_open) g_error("Enter did not close the Kindle keyboard");
+        virtual_keyboard_show_for(settings->keyboard, settings->email);
+        if (!settings->keyboard->native_open) g_error("email field did not open Kindle keyboard");
+        {
+            GtkWidget *viewport = gtk_widget_get_parent(gtk_widget_get_parent(GTK_WIDGET(settings->email)));
+            if (!gdk_test_simulate_button(viewport->window, viewport->allocation.width / 2,
+                                          viewport->allocation.height / 2, 1, 0, GDK_BUTTON_PRESS))
+                g_error("could not simulate a tap outside the keyboard");
+        }
+        drain_events();
+        if (settings->keyboard->native_open) g_error("background tap did not close Kindle keyboard");
         gtk_widget_destroy(app.window);
         bookrelay_config_free(app.config);
         g_free(app.config_path);
@@ -151,6 +150,10 @@ int main(int argc, char **argv) {
     }
     expect_visible(settings->keyboard->root, "settings keyboard");
     expect_inside_window(&app, GTK_WIDGET(settings->relay), "settings relay field");
+    expect_inside_window(&app, GTK_WIDGET(settings->email), "settings email field");
+    if (!GTK_WIDGET_IS_SENSITIVE(GTK_WIDGET(settings->email))) g_error("Kindle email is disabled");
+    if (g_strcmp0(normalize_relay_url("example.org"), "https://example.org") != 0)
+        g_error("server name was not upgraded to HTTPS");
     expect_inside_window(&app, settings->keyboard->root, "settings keyboard");
     expect_keyboard_labels_fit(settings->keyboard->root);
     snapshot(&app, argv[1], "settings.png");

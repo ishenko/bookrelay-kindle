@@ -64,9 +64,10 @@ class PairingStore:
     def claim(self, code: str):
         now = utc_now()
         token = secrets.token_urlsafe(32)
+        code = code.strip().upper()
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
-            row = conn.execute("SELECT * FROM pairings WHERE code = ?", (code.upper(),)).fetchone()
+            row = conn.execute("SELECT * FROM pairings WHERE code = ?", (code,)).fetchone()
             if not row:
                 raise ValueError("pairing code not found")
             if row["claimed_at"]:
@@ -77,7 +78,7 @@ class PairingStore:
                 raise ValueError("pairing code has no valid Kindle Email")
             conn.execute(
                 "UPDATE pairings SET claimed_at = ?, token = ? WHERE code = ?",
-                (now.isoformat(), token, code.upper()),
+                (now.isoformat(), token, code),
             )
             conn.execute(
                 "INSERT OR REPLACE INTO devices(token_hash, device_id, kindle_email, created_at) VALUES (?, ?, ?, ?)",
@@ -107,6 +108,19 @@ class PairingStore:
                 (hash_token(token),),
             ).fetchone()
         return dict(row) if row else None
+
+    def update_kindle_email(self, token: str, kindle_email: str):
+        kindle_email = kindle_email.strip()
+        if not EMAIL_RE.fullmatch(kindle_email):
+            raise ValueError("invalid Kindle Email")
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "UPDATE devices SET kindle_email = ? WHERE token_hash = ? AND revoked_at IS NULL",
+                (kindle_email, hash_token(token)),
+            )
+            if cursor.rowcount != 1:
+                raise PermissionError("invalid or revoked token")
+        return kindle_email
 
     def revoke(self, token: str):
         with self._connect() as conn:

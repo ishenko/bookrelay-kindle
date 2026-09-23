@@ -13,7 +13,7 @@ class PairingStoreTests(unittest.TestCase):
             pairing = store.start_pairing(device_id="device-1", kindle_email="reader@example.com", ttl=timedelta(minutes=5))
 
             self.assertEqual(store.status(pairing.code)["status"], "pending")
-            claim = store.claim(pairing.code)
+            claim = store.claim("  " + pairing.code.lower() + "  ")
             self.assertEqual(claim["kindle_email"], "reader@example.com")
             self.assertTrue(claim["token"])
             status = store.status(pairing.code)

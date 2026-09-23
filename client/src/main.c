@@ -56,7 +56,6 @@ typedef struct { App *app; gchar *id; gchar *title; } CategoryRow;
 
 typedef struct {
     GtkWidget *root;
-    GtkWidget *native_spacer;
     GtkWidget *bottom_widget;
     GtkWidget *symbols_button;
     GtkEntry *target;
@@ -102,7 +101,8 @@ typedef struct {
 
 typedef enum {
     TASK_SEARCH, TASK_CATEGORIES, TASK_PAIR_CLAIM,
-    TASK_SEND, TASK_DELIVERY_STATUS, TASK_COVER, TASK_SUBCATEGORIES, TASK_CATALOG_BOOKS
+    TASK_SEND, TASK_DELIVERY_STATUS, TASK_COVER, TASK_SUBCATEGORIES, TASK_CATALOG_BOOKS,
+    TASK_UPDATE_EMAIL
 } TaskKind;
 
 typedef struct {
@@ -114,6 +114,7 @@ typedef struct {
     gchar *category;
     gchar *subcategory;
     gchar *code;
+    gchar *email;
     gchar *book_id;
     gchar *title;
     gchar *job_id;
@@ -125,6 +126,7 @@ typedef struct {
     GtkWidget *image;
     GtkWidget *placeholder;
     GtkWidget *pair_page;
+    GtkWidget *settings_page;
     DeliveryPoll *delivery_poll;
     GPtrArray *books;
     GPtrArray *categories;
@@ -187,12 +189,11 @@ static void virtual_keyboard_set_labels(VirtualKeyboard *keyboard) {
 
 static void virtual_keyboard_show_for(VirtualKeyboard *keyboard, GtkEntry *entry) {
     GList *children, *item;
-    GtkWidget *parent;
     gboolean native;
     if (!keyboard || !entry) return;
     keyboard->target = entry;
     /* Prefer the device keyboard when LIPC is available. The built-in one is
-     * still available if LIPC fails or the user explicitly chooses it. */
+     * still available if LIPC fails. */
     native = g_strcmp0(g_getenv("BOOKRELAY_KEYBOARD"), "custom") != 0 &&
              !keyboard->native_unavailable;
     if (native && !keyboard->native_open) {
@@ -203,29 +204,15 @@ static void virtual_keyboard_show_for(VirtualKeyboard *keyboard, GtkEntry *entry
     children = gtk_container_get_children(GTK_CONTAINER(keyboard->root));
     for (item = children; item; item = item->next) {
         GtkWidget *row = item->data;
-        if (row == keyboard->native_spacer) continue;
         gtk_widget_set_no_show_all(row, native);
         if (native) gtk_widget_hide(row);
         else gtk_widget_show_all(row);
     }
     g_list_free(children);
-    if (native) gtk_widget_show(keyboard->native_spacer);
-    else gtk_widget_hide(keyboard->native_spacer);
-    parent = gtk_widget_get_parent(keyboard->root);
-    if (keyboard->bottom_widget && parent && GTK_IS_BOX(parent)) {
-        gint keyboard_index, bottom_index;
-        children = gtk_container_get_children(GTK_CONTAINER(parent));
-        keyboard_index = g_list_index(children, keyboard->root);
-        bottom_index = g_list_index(children, keyboard->bottom_widget);
-        if (native && bottom_index > keyboard_index)
-            gtk_box_reorder_child(GTK_BOX(parent), keyboard->bottom_widget, keyboard_index);
-        else if (!native && keyboard_index > bottom_index)
-            gtk_box_reorder_child(GTK_BOX(parent), keyboard->root, bottom_index);
-        g_list_free(children);
-    }
-    /* no-show-all keeps this hidden when a page is shown. Its children were
-     * shown at construction; show() explicitly reveals the keyboard itself. */
-    gtk_widget_show(keyboard->root);
+    /* The Kindle keyboard overlays the page; reserving height here creates
+     * a large gray blank area and pushes the form out of view. */
+    if (native) gtk_widget_hide(keyboard->root);
+    else gtk_widget_show(keyboard->root);
     if (!native) virtual_keyboard_set_labels(keyboard);
 }
 
@@ -238,13 +225,8 @@ static void virtual_keyboard_hide(VirtualKeyboard *keyboard) {
     gtk_widget_hide(keyboard->root);
 }
 
-static void virtual_keyboard_use_custom(GtkButton *button, gpointer userdata) {
-    VirtualKeyboard *keyboard = userdata;
-    GtkEntry *target = keyboard->target;
-    virtual_keyboard_hide(keyboard);
-    keyboard->native_unavailable = TRUE;
-    virtual_keyboard_show_for(keyboard, target);
-    gtk_widget_grab_focus(GTK_WIDGET(target));
+static void virtual_keyboard_entry_activate(GtkEntry *entry, gpointer userdata) {
+    virtual_keyboard_hide(userdata);
 }
 
 static gboolean virtual_keyboard_focus_in(GtkWidget *widget, GdkEventFocus *event, gpointer userdata) {
@@ -262,11 +244,38 @@ static gboolean virtual_keyboard_button_press(GtkWidget *widget, GdkEventButton 
     return FALSE;
 }
 
+static gboolean virtual_keyboard_focus_out(GtkWidget *widget, GdkEventFocus *event, gpointer userdata) {
+    virtual_keyboard_hide(userdata);
+    return FALSE;
+}
+
 static void virtual_keyboard_bind(VirtualKeyboard *keyboard, GtkEntry *entry) {
     if (!keyboard || !entry) return;
     gtk_widget_add_events(GTK_WIDGET(entry), GDK_BUTTON_PRESS_MASK);
     g_signal_connect(entry, "focus-in-event", G_CALLBACK(virtual_keyboard_focus_in), keyboard);
+    g_signal_connect(entry, "focus-out-event", G_CALLBACK(virtual_keyboard_focus_out), keyboard);
     g_signal_connect(entry, "button-press-event", G_CALLBACK(virtual_keyboard_button_press), keyboard);
+    g_signal_connect(entry, "activate", G_CALLBACK(virtual_keyboard_entry_activate), keyboard);
+}
+
+static gboolean virtual_keyboard_background_press(GtkWidget *widget, GdkEventButton *event, gpointer userdata) {
+    App *app = userdata;
+    GtkWidget *target = gtk_get_event_widget((GdkEvent *)event);
+    GtkWidget *cursor;
+    VirtualKeyboard *keyboard = NULL;
+    if (app->page_window) {
+        SettingsPage *settings = g_object_get_data(G_OBJECT(app->page_window), "bookrelay-settings-page");
+        PairPage *pair = g_object_get_data(G_OBJECT(app->page_window), "bookrelay-pair-page");
+        if (settings) keyboard = settings->keyboard;
+        else if (pair) keyboard = pair->keyboard;
+    } else if (app->keyboard) {
+        keyboard = g_object_get_data(G_OBJECT(app->keyboard), "bookrelay-keyboard-state");
+    }
+    if (!keyboard) return FALSE;
+    for (cursor = target; cursor; cursor = gtk_widget_get_parent(cursor))
+        if (GTK_IS_ENTRY(cursor) || cursor == keyboard->root) return FALSE;
+    virtual_keyboard_hide(keyboard);
+    return FALSE;
 }
 
 static void virtual_keyboard_insert(VirtualKeyboard *keyboard, const gchar *value) {
@@ -381,7 +390,6 @@ static VirtualKeyboard *virtual_keyboard_new(GtkWidget *parent, GtkEntry *initia
     VirtualKeyboard *keyboard = g_new0(VirtualKeyboard, 1);
     GtkWidget *row;
     GtkWidget *button;
-    GtkWidget *fallback_alignment;
     guint i;
     keyboard->root = gtk_vbox_new(FALSE, 1);
     keyboard->target = initial_target;
@@ -451,20 +459,7 @@ static VirtualKeyboard *virtual_keyboard_new(GtkWidget *parent, GtkEntry *initia
     gtk_box_pack_start(GTK_BOX(row), button, TRUE, TRUE, 0);
     virtual_keyboard_pack_row(keyboard->root, row);
 
-    keyboard->native_spacer = gtk_event_box_new();
-    gtk_widget_set_size_request(keyboard->native_spacer, -1,
-                                gdk_screen_get_height(gdk_screen_get_default()) * 35 / 100);
-    button = gtk_button_new_with_label("Клавиатура BookRelay");
-    make_touch_target(button, 320, 50);
-    set_large_font(button, "Sans 14");
-    g_signal_connect(button, "clicked", G_CALLBACK(virtual_keyboard_use_custom), keyboard);
-    fallback_alignment = gtk_alignment_new(0.5, 0.0, 0.0, 0.0);
-    gtk_container_add(GTK_CONTAINER(fallback_alignment), button);
-    gtk_container_add(GTK_CONTAINER(keyboard->native_spacer), fallback_alignment);
-    gtk_box_pack_start(GTK_BOX(keyboard->root), keyboard->native_spacer, FALSE, FALSE, 0);
     gtk_widget_show_all(keyboard->root);
-    gtk_widget_hide(keyboard->native_spacer);
-    gtk_widget_set_no_show_all(keyboard->native_spacer, TRUE);
     gtk_widget_hide(keyboard->root);
     gtk_widget_set_no_show_all(keyboard->root, TRUE);
     if (parent) gtk_box_pack_start(GTK_BOX(parent), keyboard->root, FALSE, FALSE, 2);
@@ -596,6 +591,9 @@ static GtkWidget *new_kindle_page(App *app, const gchar *heading, GtkWidget **bo
     gtk_container_set_border_width(GTK_CONTAINER(body), 8);
     gtk_scrolled_window_add_with_viewport(GTK_SCROLLED_WINDOW(scroll), body);
     ink_background(gtk_bin_get_child(GTK_BIN(scroll)), "#ffffff");
+    gtk_widget_add_events(gtk_bin_get_child(GTK_BIN(scroll)), GDK_BUTTON_PRESS_MASK);
+    g_signal_connect(gtk_bin_get_child(GTK_BIN(scroll)), "button-press-event",
+                     G_CALLBACK(virtual_keyboard_background_press), app);
     gtk_box_pack_start(GTK_BOX(root), scroll, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(root), actions, FALSE, FALSE, 0);
     g_object_set_data(G_OBJECT(root), "bookrelay-page-actions", actions);
@@ -623,7 +621,7 @@ static void attach_page_keyboard(GtkWidget *page_root, VirtualKeyboard *keyboard
 
 static GtkWidget *page_button(const gchar *label) {
     GtkWidget *button = gtk_button_new_with_label(label);
-    make_touch_target(button, 180, 54);
+    make_touch_target(button, 225, 68);
     return button;
 }
 
@@ -647,6 +645,7 @@ static void async_task_free(AsyncTask *task) {
     g_free(task->category);
     g_free(task->subcategory);
     g_free(task->code);
+    g_free(task->email);
     g_free(task->book_id);
     g_free(task->title);
     g_free(task->job_id);
@@ -688,6 +687,9 @@ static gpointer async_task_worker(gpointer userdata) {
             break;
         case TASK_PAIR_CLAIM:
             task->claim = bookrelay_api_pair_claim(task->base_url, task->code, &task->error);
+            break;
+        case TASK_UPDATE_EMAIL:
+            task->state = bookrelay_api_update_email(task->base_url, task->token, task->email, &task->error);
             break;
         case TASK_SEND:
             task->job_id = bookrelay_api_send(task->base_url, task->token, task->book_id, task->title, &task->error);
@@ -1329,17 +1331,33 @@ static void navigate_view(App *app, guint view, guint page) {
     start_async_task(task);
 }
 
-static gchar *trim_relay_url(const gchar *value) {
+static gchar *normalize_relay_url(const gchar *value) {
     gchar *url = g_strdup(value ? value : "");
     gchar *end;
     g_strstrip(url);
     end = url + strlen(url);
     while (end > url && end[-1] == '/') *--end = '\0';
+    if (*url && !strstr(url, "://")) {
+        gchar *https_url = g_strconcat("https://", url, NULL);
+        g_free(url);
+        url = https_url;
+    }
     return url;
 }
 
 static gboolean valid_relay_url(const gchar *value) {
-    return value && *value && (g_str_has_prefix(value, "https://") || g_str_has_prefix(value, "http://")) && !strchr(value, ' ');
+    const gchar *host;
+    const gchar *cursor;
+    if (!value || (!g_str_has_prefix(value, "https://") && !g_str_has_prefix(value, "http://"))) return FALSE;
+    host = strstr(value, "://") + 3;
+    if (!*host || *host == '/' || *host == ':') return FALSE;
+    for (cursor = value; *cursor; cursor++)
+        if (g_ascii_isspace(*cursor)) return FALSE;
+    return TRUE;
+}
+
+static const gchar *display_relay_url(const gchar *value) {
+    return value && g_str_has_prefix(value, "https://") ? value + 8 : (value ? value : "");
 }
 
 static void load_categories(App *app) {
@@ -1359,26 +1377,30 @@ static void pair_page_connect(GtkButton *button, gpointer userdata) {
     PairPage *page = userdata;
     App *app = page->app;
     const gchar *pairing_code = gtk_entry_get_text(page->code);
-    gchar *relay_url = trim_relay_url(gtk_entry_get_text(page->relay));
+    gchar *relay_url = normalize_relay_url(gtk_entry_get_text(page->relay));
+    gchar *normalized_code = g_ascii_strup(pairing_code ? pairing_code : "", -1);
+    g_strstrip(normalized_code);
 
     if (!valid_relay_url(relay_url)) {
-        set_status(app, "Relay URL должен начинаться с http:// или https://");
+        set_status(app, "Введите адрес сервера, например relay.example.com");
         gtk_window_set_focus(GTK_WINDOW(app->window), GTK_WIDGET(page->relay));
         virtual_keyboard_show_for(page->keyboard, page->relay);
         g_free(relay_url);
+        g_free(normalized_code);
         return;
     }
-    if (!pairing_code || !*pairing_code) {
+    if (!*normalized_code) {
         set_status(app, "Введите одноразовый код");
         gtk_window_set_focus(GTK_WINDOW(app->window), GTK_WIDGET(page->code));
         virtual_keyboard_show_for(page->keyboard, page->code);
         g_free(relay_url);
+        g_free(normalized_code);
         return;
     }
     {
         AsyncTask *task = async_task_new(app, TASK_PAIR_CLAIM);
         task->base_url = g_strdup(relay_url);
-        task->code = g_strdup(pairing_code);
+        task->code = g_strdup(normalized_code);
         task->pair_page = page->window;
         set_status(app, "Подключаем Kindle…");
         if (start_async_task(task)) {
@@ -1387,6 +1409,7 @@ static void pair_page_connect(GtkButton *button, gpointer userdata) {
         }
     }
     g_free(relay_url);
+    g_free(normalized_code);
 }
 
 static void pair_clicked(GtkButton *button, gpointer userdata) {
@@ -1410,23 +1433,23 @@ static void pair_clicked(GtkButton *button, gpointer userdata) {
     page->code = GTK_ENTRY(gtk_entry_new());
     g_object_set_data_full(G_OBJECT(window), "bookrelay-pair-page", page, g_free);
 
-    intro = gtk_label_new("Введите URL сервера и одноразовый код.");
-    relay_label = gtk_label_new("Адрес relay");
+    intro = gtk_label_new("Введите адрес сервера без https:// и одноразовый код.");
+    relay_label = gtk_label_new("Адрес сервера");
     code_label = gtk_label_new("Код подключения");
     gtk_label_set_line_wrap(GTK_LABEL(intro), TRUE);
     gtk_misc_set_alignment(GTK_MISC(intro), 0, 0.5);
     gtk_misc_set_alignment(GTK_MISC(relay_label), 0, 0.5);
     gtk_misc_set_alignment(GTK_MISC(code_label), 0, 0.5);
-    set_large_font(intro, "Sans 17");
-    set_large_font(relay_label, "Sans Bold 18");
-    set_large_font(code_label, "Sans Bold 18");
-    set_large_font(GTK_WIDGET(page->relay), "Sans 20");
-    set_large_font(GTK_WIDGET(page->code), "Sans 20");
+    set_large_font(intro, "Sans 21");
+    set_large_font(relay_label, "Sans Bold 22");
+    set_large_font(code_label, "Sans Bold 22");
+    set_large_font(GTK_WIDGET(page->relay), "Sans 25");
+    set_large_font(GTK_WIDGET(page->code), "Sans 25");
     gtk_entry_set_width_chars(page->relay, 8);
     gtk_entry_set_width_chars(page->code, 8);
-    gtk_widget_set_size_request(GTK_WIDGET(page->relay), -1, 56);
-    gtk_widget_set_size_request(GTK_WIDGET(page->code), -1, 56);
-    gtk_entry_set_text(page->relay, app->config->relay_url ? app->config->relay_url : "");
+    gtk_widget_set_size_request(GTK_WIDGET(page->relay), -1, 70);
+    gtk_widget_set_size_request(GTK_WIDGET(page->code), -1, 70);
+    gtk_entry_set_text(page->relay, display_relay_url(app->config->relay_url));
     gtk_entry_set_max_length(page->code, 32);
     gtk_box_pack_start(GTK_BOX(body), intro, FALSE, FALSE, 4);
     gtk_box_pack_start(GTK_BOX(body), relay_label, FALSE, FALSE, 4);
@@ -1477,14 +1500,42 @@ static void settings_page_cancel(GtkButton *button, gpointer userdata) {
 static void settings_page_save(GtkButton *button, gpointer userdata) {
     SettingsPage *page = userdata;
     App *app = page->app;
-    gchar *relay_url = trim_relay_url(gtk_entry_get_text(page->relay));
+    gchar *relay_url = normalize_relay_url(gtk_entry_get_text(page->relay));
+    gchar *email = g_strdup(gtk_entry_get_text(page->email));
+    g_strstrip(email);
     if (!valid_relay_url(relay_url)) {
-        set_status(app, "Relay URL должен начинаться с http:// или https://");
+        set_status(app, "Введите адрес сервера, например relay.example.com");
         gtk_window_set_focus(GTK_WINDOW(app->window), GTK_WIDGET(page->relay));
         virtual_keyboard_show_for(page->keyboard, page->relay);
         g_free(relay_url);
+        g_free(email);
         return;
     }
+    if (g_strcmp0(email, app->config->kindle_email ? app->config->kindle_email : "") != 0) {
+        AsyncTask *task;
+        if (!app->config->token || !*app->config->token) {
+            set_status(app, "Сначала подключите Kindle с кодом на relay");
+            g_free(relay_url);
+            g_free(email);
+            return;
+        }
+        if (!strchr(email, '@') || strchr(email, ' ')) {
+            set_status(app, "Введите корректную почту Kindle");
+            g_free(relay_url);
+            g_free(email);
+            return;
+        }
+        task = async_task_new(app, TASK_UPDATE_EMAIL);
+        task->base_url = relay_url;
+        task->token = g_strdup(app->config->token);
+        task->email = email;
+        task->settings_page = page->window;
+        set_status(app, "Сохраняем почту Kindle на relay…");
+        if (start_async_task(task))
+            gtk_widget_set_sensitive(g_object_get_data(G_OBJECT(page->window), "bookrelay-settings-save"), FALSE);
+        return;
+    }
+    g_free(email);
     g_free(app->config->relay_url);
     app->config->relay_url = relay_url;
     bookrelay_config_save(app->config, app->config_path, NULL);
@@ -1522,33 +1573,36 @@ static void settings_clicked(GtkButton *button, gpointer userdata) {
     page->email = GTK_ENTRY(gtk_entry_new());
     g_object_set_data_full(G_OBJECT(window), "bookrelay-settings-page", page, g_free);
 
-    relay_label = gtk_label_new("Relay URL");
+    relay_label = gtk_label_new("Адрес сервера");
     email_label = gtk_label_new("Почта Kindle");
-    hint = gtk_label_new("Адрес почты задаётся при подключении и здесь доступен только для просмотра.");
+    hint = gtk_label_new("Адрес для доставки книг. Изменение сохранится на сервере.");
     gtk_label_set_line_wrap(GTK_LABEL(hint), TRUE);
     gtk_misc_set_alignment(GTK_MISC(hint), 0, 0.5);
     gtk_misc_set_alignment(GTK_MISC(relay_label), 0, 0.5);
     gtk_misc_set_alignment(GTK_MISC(email_label), 0, 0.5);
-    set_large_font(relay_label, "Sans 17");
-    set_large_font(email_label, "Sans 17");
-    set_large_font(hint, "Sans 16");
-    set_large_font(GTK_WIDGET(page->relay), "Sans 20");
-    set_large_font(GTK_WIDGET(page->email), "Sans 20");
+    set_large_font(relay_label, "Sans 21");
+    set_large_font(email_label, "Sans 21");
+    set_large_font(hint, "Sans 20");
+    set_large_font(GTK_WIDGET(page->relay), "Sans 25");
+    set_large_font(GTK_WIDGET(page->email), "Sans 25");
+    gtk_widget_set_size_request(GTK_WIDGET(page->relay), -1, 70);
+    gtk_widget_set_size_request(GTK_WIDGET(page->email), -1, 70);
     gtk_entry_set_width_chars(page->relay, 8);
     gtk_entry_set_width_chars(page->email, 8);
-    gtk_entry_set_text(page->relay, app->config->relay_url ? app->config->relay_url : "");
+    gtk_entry_set_text(page->relay, display_relay_url(app->config->relay_url));
     gtk_entry_set_text(page->email, app->config->kindle_email ? app->config->kindle_email : "");
-    gtk_widget_set_sensitive(GTK_WIDGET(page->email), FALSE);
     gtk_box_pack_start(GTK_BOX(body), relay_label, FALSE, FALSE, 4);
     gtk_box_pack_start(GTK_BOX(body), GTK_WIDGET(page->relay), FALSE, FALSE, 4);
     gtk_box_pack_start(GTK_BOX(body), email_label, FALSE, FALSE, 4);
     gtk_box_pack_start(GTK_BOX(body), GTK_WIDGET(page->email), FALSE, FALSE, 4);
     gtk_box_pack_start(GTK_BOX(body), hint, FALSE, FALSE, 4);
     page->keyboard = virtual_keyboard_new(NULL, page->relay);
+    virtual_keyboard_bind(page->keyboard, page->email);
     attach_page_keyboard(window, page->keyboard);
 
     cancel_button = page_button(app->catalog_ready ? "Отмена" : "Выход");
     save_button = page_button("Сохранить");
+    g_object_set_data(G_OBJECT(window), "bookrelay-settings-save", save_button);
     pair_button = page_button("Подключение");
     ink_primary_button(save_button);
     g_signal_connect(cancel_button, "clicked", G_CALLBACK(settings_page_cancel), page);
@@ -1656,6 +1710,22 @@ static gboolean async_task_complete(gpointer userdata) {
                 app->catalog_ready = FALSE;
                 set_status(app, "Kindle привязан · загружаем каталог…");
                 load_categories(app);
+            }
+            break;
+        case TASK_UPDATE_EMAIL:
+            if (!task->state || !*task->state) {
+                show_error(app, "Почта Kindle не сохранена", task->error);
+                if (app->page_window == task->settings_page)
+                    gtk_widget_set_sensitive(g_object_get_data(G_OBJECT(task->settings_page), "bookrelay-settings-save"), TRUE);
+            } else {
+                g_free(app->config->relay_url);
+                app->config->relay_url = g_strdup(task->base_url);
+                g_free(app->config->kindle_email);
+                app->config->kindle_email = g_strdup(task->state);
+                bookrelay_config_save(app->config, app->config_path, NULL);
+                set_status(app, "Настройки сохранены");
+                if (app->page_window == task->settings_page)
+                    gtk_widget_destroy(task->settings_page);
             }
             break;
         case TASK_SEND:
@@ -1946,6 +2016,8 @@ static void build_ui(App *app) {
     g_signal_connect(app->next_page, "clicked", G_CALLBACK(next_page_clicked), app);
     g_signal_connect(app->last_page, "clicked", G_CALLBACK(last_page_clicked), app);
     g_signal_connect(app->window, "delete-event", G_CALLBACK(delete_event), app);
+    gtk_widget_add_events(app->window, GDK_BUTTON_PRESS_MASK);
+    g_signal_connect(app->window, "button-press-event", G_CALLBACK(virtual_keyboard_background_press), app);
     gtk_widget_show_all(app->window);
     gtk_widget_hide(app->keyboard);
     gtk_widget_hide(app->search_row);

@@ -51,7 +51,8 @@ class KindleUiContractTests(unittest.TestCase):
         source = Path(__file__).parents[1].joinpath("src", "main.c").read_text()
         self.assertIn("gtk_window_set_default_size", source)
         self.assertIn("https://", source)
-        self.assertIn("Relay URL должен начинаться", source)
+        self.assertIn("normalize_relay_url", source)
+        self.assertIn("display_relay_url", source)
         self.assertIn("gtk_entry_set_width_chars", source)
 
     def test_native_cards_have_visible_cover_area_and_year(self):

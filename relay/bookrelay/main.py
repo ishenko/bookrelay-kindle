@@ -30,6 +30,12 @@ class PairClaimRequest(BaseModel):
     code: str = Field(min_length=4, max_length=32)
 
 
+class DeviceEmailRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kindle_email: str = Field(min_length=3, max_length=320)
+
+
 class DeliveryRequest(BaseModel):
     book_id: str = Field(min_length=1, max_length=128)
     title: str | None = Field(default=None, max_length=300)
@@ -218,6 +224,18 @@ def create_app(db_path: Path | str | None = None, source=None, mailer=None, pair
     def revoke_device(authorization: str | None = Header(default=None)):
         pairing.revoke(_token(authorization))
         return {"status": "revoked"}
+
+    @app.put("/v1/devices/me")
+    def update_device_email(request: Request, payload: DeviceEmailRequest, authorization: str | None = Header(default=None)):
+        limit(request, "device-update", 10, 600)
+        token = _token(authorization)
+        try:
+            email = pairing.update_kindle_email(token, payload.kindle_email)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=401, detail=str(exc)) from exc
+        return {"kindle_email": email}
 
     return app
 

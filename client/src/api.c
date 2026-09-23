@@ -55,9 +55,12 @@ static gboolean request_bytes(const gchar *method, const gchar *url, const gchar
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, receive_body);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "BookRelay Kindle/0.1");
-    if (g_strcmp0(method, "POST") == 0) {
-        curl_easy_setopt(curl, CURLOPT_POST, 1L);
+    if (g_strcmp0(method, "POST") == 0 || g_strcmp0(method, "PUT") == 0) {
         curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body ? body : "");
+        if (g_strcmp0(method, "PUT") == 0)
+            curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT");
+        else
+            curl_easy_setopt(curl, CURLOPT_POST, 1L);
         headers = curl_slist_append(headers, "Content-Type: application/json");
     }
     if (token && *token) {
@@ -297,6 +300,17 @@ BookRelayClaim *bookrelay_api_pair_claim(const gchar *base_url, const gchar *cod
     }
     g_free(url); g_free(escaped_code); g_free(body); g_free(response);
     return claim;
+}
+
+gchar *bookrelay_api_update_email(const gchar *base_url, const gchar *token, const gchar *email, GError **error) {
+    gchar *url = join_url(base_url, "/v1/devices/me");
+    gchar *escaped_email = json_escape(email);
+    gchar *body = g_strdup_printf("{\"kindle_email\":\"%s\"}", escaped_email);
+    long status;
+    gchar *response = request("PUT", url, token, body, &status, error);
+    gchar *updated = response ? json_string(response, "kindle_email") : NULL;
+    g_free(url); g_free(escaped_email); g_free(body); g_free(response);
+    return updated;
 }
 
 gchar *bookrelay_api_send(const gchar *base_url, const gchar *token, const gchar *book_id, const gchar *title, GError **error) {

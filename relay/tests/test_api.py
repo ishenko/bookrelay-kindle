@@ -131,6 +131,25 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
 
                 self.assertEqual([item[0] for item in mailer.sent], ["first@kindle.com", "second@kindle.com"])
 
+    async def test_device_can_change_delivery_email_with_its_token(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mailer = FakeMailer()
+            app = create_app(Path(tmp) / "relay.sqlite3", source=FakeSource(), mailer=mailer,
+                             pairing_admin_key="test-owner-key", delivery_enabled=True)
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+                start = await client.post("/v1/pair/start", json={"device_id": "pw12", "kindle_email": "old@kindle.com", "admin_key": "test-owner-key"})
+                claim = await client.post("/v1/pair/claim", json={"code": start.json()["code"].lower()})
+                token = claim.json()["token"]
+                headers = {"Authorization": f"Bearer {token}"}
+                self.assertEqual((await client.put("/v1/devices/me", json={"kindle_email": "new@kindle.com"})).status_code, 401)
+                self.assertEqual((await client.put("/v1/devices/me", json={"kindle_email": "invalid"}, headers=headers)).status_code, 422)
+                changed = await client.put("/v1/devices/me", json={"kindle_email": "new@kindle.com"}, headers=headers)
+                self.assertEqual(changed.json()["kindle_email"], "new@kindle.com")
+                self.assertEqual(app.state.pairing.authenticate(token)["kindle_email"], "new@kindle.com")
+                sent = await client.post("/v1/deliveries", headers=headers, json={"book_id": "123"})
+                self.assertEqual(sent.status_code, 202)
+                self.assertEqual(mailer.sent[-1][0], "new@kindle.com")
+
     async def test_delivery_requires_pairing_token(self):
         with tempfile.TemporaryDirectory() as tmp:
             app = create_app(Path(tmp) / "relay.sqlite3", source=FakeSource(), mailer=FakeMailer())

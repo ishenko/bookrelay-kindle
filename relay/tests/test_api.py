@@ -77,7 +77,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
                 self.cover_requests = []
 
             def catalog_books(self, category, subcategory, page=1, size=6):
-                return [Book(id="451198", title="A Book", cover_url="https://flibusta.is/i/98/451198/cover.jpg")], False
+                return [Book(id="451198", title="A Book", cover_url="https://flibusta.is/i/98/451198/img_12")], False
 
             def _get(self, path):
                 self.cover_requests.append(path)
@@ -98,7 +98,8 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
                 cover = await client.get(cover_url, headers=headers)
                 self.assertEqual(cover.status_code, 200)
                 self.assertEqual(cover.content, b"\xff\xd8\xfftest-jpeg")
-                self.assertEqual(source.cover_requests, ["/i/98/451198/cover.jpg"])
+                self.assertEqual(cover.headers["content-type"], "image/jpeg")
+                self.assertEqual(source.cover_requests, ["/i/98/451198/img_12"])
                 rejected = await client.get("/v1/books/451198/cover", params={"path": "//elsewhere.test/secret"}, headers=headers)
                 self.assertEqual(rejected.status_code, 404)
                 self.assertEqual(len(source.cover_requests), 1)

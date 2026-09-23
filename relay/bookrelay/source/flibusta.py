@@ -42,21 +42,28 @@ def parse_opds_feed(payload: bytes, base_url: str) -> tuple[list[dict[str, str]]
         if section is not None:
             sections.append({"id": section.get("href", ""), "title": title})
             continue
-        acquisition = next((link for link in links if "/b/" in link.get("href", "") and "acquisition" in link.get("rel", "")), None)
-        if acquisition is None:
-            continue
-        match = re.search(r"/b/([0-9]+)", acquisition.get("href", ""))
-        if not match:
-            continue
-        cover = next((link.get("href", "") for link in links if link.get("rel") in ("http://opds-spec.org/thumbnail", "http://opds-spec.org/image")), "")
-        issued = entry.findtext(f"{DC}issued") or ""
-        content = entry.findtext(f"{ATOM}content") or ""
-        books.append(Book(id=match.group(1), title=title,
-                          author=", ".join(author.findtext(f"{ATOM}name") or "" for author in entry.findall(f"{ATOM}author")),
-                          cover_url=urljoin(base_url, cover) if cover else "",
-                          description=clean_text(content)[:2000],
-                          year=int(issued[:4]) if re.fullmatch(r"\d{4}", issued[:4]) else None))
+        book = parse_book_entry(entry, base_url)
+        if book:
+            books.append(book)
     return sections, books, has_next
+
+
+def parse_book_entry(entry: ET.Element, base_url: str) -> Book | None:
+    links = entry.findall(f"{ATOM}link")
+    acquisition = next((link for link in links if "/b/" in link.get("href", "") and "acquisition" in link.get("rel", "")), None)
+    if acquisition is None:
+        return None
+    match = re.search(r"/b/([0-9]+)", acquisition.get("href", ""))
+    if not match:
+        return None
+    cover = next((link.get("href", "") for link in links if link.get("rel") in ("http://opds-spec.org/thumbnail", "http://opds-spec.org/image")), "")
+    issued = entry.findtext(f"{DC}issued") or ""
+    content = entry.findtext(f"{ATOM}content") or ""
+    return Book(id=match.group(1), title=(entry.findtext(f"{ATOM}title") or "").strip(),
+                author=", ".join(author.findtext(f"{ATOM}name") or "" for author in entry.findall(f"{ATOM}author")),
+                cover_url=urljoin(base_url, cover) if cover else "",
+                description=clean_text(content)[:2000],
+                year=int(issued[:4]) if re.fullmatch(r"\d{4}", issued[:4]) else None)
 
 
 def clean_text(value: str) -> str:
@@ -146,19 +153,65 @@ class FlibustaSource:
                     self._feed_cache_bytes -= len(removed)
         return payload
 
+    def _book_feed(self, path: str, needed: int, cache: bool) -> tuple[list[Book], str | None]:
+        # Test and alternate sources supply complete feeds through _get().
+        if type(self)._get is not FlibustaSource._get:
+            payload = self._catalog_feed(path) if cache else self._get(path)
+            root = parse_feed_root(payload)
+            next_link = next((link.get("href") for link in root.findall(f"{ATOM}link") if link.get("rel") == "next"), None)
+            return parse_opds_feed(payload, self.base_url)[1], next_link
+
+        request = Request(urljoin(self.base_url + "/", path.lstrip("/")), headers={"User-Agent": "BookRelay/0.1"})
+        parser = ET.XMLPullParser(events=("start", "end"))
+        root = None
+        next_link = None
+        books: list[Book] = []
+        received = 0
+        try:
+            with urlopen(request, timeout=self.timeout) as response:
+                while len(books) < needed:
+                    # read(n) waits for n bytes, even if the first page is already available.
+                    chunk = response.read1(8192)
+                    if not chunk:
+                        parser.close()
+                        break
+                    received += len(chunk)
+                    if received > 25 * 1024 * 1024:
+                        raise SourceUnavailable("Flibusta response exceeds 25 MiB")
+                    parser.feed(chunk)
+                    for event, element in parser.read_events():
+                        if event == "start" and root is None:
+                            root = element
+                            if root.tag != f"{ATOM}feed":
+                                raise SourceUnavailable("Flibusta returned an invalid catalog")
+                        elif event == "end" and root is not None:
+                            if element.tag == f"{ATOM}link" and element in root and element.get("rel") == "next":
+                                next_link = element.get("href")
+                            elif element.tag == f"{ATOM}entry" and element in root:
+                                book = parse_book_entry(element, self.base_url)
+                                if book:
+                                    books.append(book)
+                                root.remove(element)
+                    if len(books) >= needed:
+                        break
+        except (HTTPError, URLError, OSError, TimeoutError) as exc:
+            raise SourceUnavailable("Flibusta did not respond; please retry") from exc
+        except ET.ParseError as exc:
+            raise SourceUnavailable("Flibusta returned an invalid catalog") from exc
+        if root is None:
+            raise SourceUnavailable("Flibusta returned an invalid catalog")
+        return books, next_link
+
     def _paged_books(self, path: str, page: int, size: int = 6, cache: bool = False) -> tuple[list[Book], bool]:
         start = (page - 1) * size
         target = start + size
         books_seen: list[Book] = []
         visited: set[str] = set()
-        while path and len(books_seen) < target:
+        while path and len(books_seen) < target + 1:
             if path in visited or len(visited) >= 100:
                 raise SourceUnavailable("Flibusta returned invalid pagination")
             visited.add(path)
-            payload = self._catalog_feed(path) if cache else self._get(path)
-            root = parse_feed_root(payload)
-            next_link = next((link.get("href") for link in root.findall(f"{ATOM}link") if link.get("rel") == "next"), None)
-            _, books, _ = parse_opds_feed(payload, self.base_url)
+            books, next_link = self._book_feed(path, target + 1 - len(books_seen), cache)
             books_seen.extend(books)
             path = next_link
         return books_seen[start:start + size], len(books_seen) > start + size or bool(path)
@@ -183,7 +236,13 @@ class FlibustaSource:
         origin, cover = urlsplit(self.base_url), urlsplit(cover_url)
         if not re.fullmatch(r"[0-9]+", book_id) or (cover.scheme, cover.netloc) != (origin.scheme, origin.netloc):
             raise ValueError("invalid cover URL")
-        if cover.query or cover.fragment or not re.fullmatch(rf"/i/[0-9]{{1,2}}/{re.escape(book_id)}/cover[.](?:jpe?g|png)", cover.path):
+        # OPDS covers can have names such as img_12 or sol22.jpg, not just cover.jpg.
+        # Keep the request on the configured host and within this book's image folder.
+        filename = cover.path.rsplit("/", 1)[-1]
+        if (cover.query or cover.fragment or
+                not re.fullmatch(rf"/i/[0-9]{{1,2}}/{re.escape(book_id)}/[^/]+", cover.path) or
+                not re.fullmatch(r"[A-Za-z0-9_-][A-Za-z0-9._-]{0,95}", filename) or
+                ".." in filename):
             raise ValueError("invalid cover path")
         return cover.path
 

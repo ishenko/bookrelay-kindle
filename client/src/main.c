@@ -974,7 +974,7 @@ static void update_pager(App *app) {
     if (app->view == VIEW_FAVORITES) count = app->favorites ? app->favorites->books->len : 0;
     total = MAX(1, (count + items_per_page(app) - 1) / items_per_page(app));
     if (app->view == VIEW_BOOKS || app->view == VIEW_SEARCH) {
-        text = app->has_next ? g_strdup_printf("Страница %u · далее ›", app->page)
+        text = app->has_next ? g_strdup_printf("Страница %u", app->page)
                              : g_strdup_printf("Страница %u из %u", app->page, app->page);
     } else {
         text = g_strdup_printf("Страница %u из %u", app->page, total);
@@ -1857,6 +1857,7 @@ static void search_icon_clicked(GtkButton *button, gpointer userdata) {
     gtk_widget_show(app->search_row);
     /* Focus after the toolbar tap has finished. On Kindle the keyboard can
      * otherwise take input while the pointer is still held on the icon. */
+    gtk_window_set_focus(GTK_WINDOW(app->window), app->query);
     g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, focus_widget_idle,
                     g_object_ref(app->query), g_object_unref);
 }

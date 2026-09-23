@@ -269,7 +269,7 @@ def create_app(db_path: Path | str | None = None, source=None, mailer=None, pair
             payload = source.download_cover(book_id, path)
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        return Response(content=payload, media_type="image/png" if path.endswith(".png") else "image/jpeg",
+        return Response(content=payload, media_type="image/png" if payload.startswith(b"\x89PNG\r\n\x1a\n") else "image/jpeg",
                         headers={"Cache-Control": "private, max-age=86400"})
 
     @app.get("/v1/books/{book_id}")

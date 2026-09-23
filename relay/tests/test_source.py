@@ -113,6 +113,7 @@ class FlibustaParserTests(unittest.TestCase):
         self.assertTrue(more)
         self.assertFalse(last)
         self.assertEqual(source.requests, ['/opds/genres/7',
+                                          '/opds/genres/7?page=2',
                                           '/opds/genres/7', '/opds/genres/7?page=2'])
 
     def test_catalog_first_page_does_not_refetch_navigation(self):
@@ -134,6 +135,34 @@ class FlibustaParserTests(unittest.TestCase):
         self.assertEqual(source.requests, ['/opds/genres/Business/144'])
         with self.assertRaises(ValueError):
             source.catalog_books('/opds/genres/Business', 'https://elsewhere.test/secret')
+
+    def test_streaming_stops_when_first_page_is_ready(self):
+        class SlowResponse:
+            def __init__(self):
+                self.reads = 0
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read1(self, limit):
+                self.reads += 1
+                if self.reads > 1:
+                    raise AssertionError('read the rest of a huge OPDS feed')
+                entries = b''.join(
+                    ('<entry><title>Book %d</title><link rel="http://opds-spec.org/acquisition/open-access" href="/b/%d/epub" /></entry>' % (i, i)).encode()
+                    for i in range(13)
+                )
+                return b'<feed xmlns="http://www.w3.org/2005/Atom">' + entries
+
+        response = SlowResponse()
+        with patch('bookrelay.source.flibusta.urlopen', return_value=response):
+            books, more = FlibustaSource().catalog_books('/opds/genres/Business', '/opds/genres/Business/141', 1, 12)
+        self.assertEqual([book.id for book in books], [str(i) for i in range(12)])
+        self.assertTrue(more)
+        self.assertEqual(response.reads, 1)
 
     def test_catalog_next_page_reuses_previous_opds_feed(self):
         class StubSource(FlibustaSource):
@@ -161,9 +190,15 @@ class FlibustaParserTests(unittest.TestCase):
         source = FlibustaSource()
         self.assertEqual(source.cover_path('451198', 'https://flibusta.is/i/98/451198/cover.jpg'),
                          '/i/98/451198/cover.jpg')
+        self.assertEqual(source.cover_path('659948', 'https://flibusta.is/i/48/659948/img_12'),
+                         '/i/48/659948/img_12')
+        self.assertEqual(source.cover_path('626662', 'https://flibusta.is/i/62/626662/_1551035688_76.jpg'),
+                         '/i/62/626662/_1551035688_76.jpg')
         for url in ('https://elsewhere.test/i/98/451198/cover.jpg',
                     'https://flibusta.is/i/98/1/cover.jpg',
-                    'https://flibusta.is/i/98/451198/cover.jpg?redirect=1'):
+                    'https://flibusta.is/i/98/451198/cover.jpg?redirect=1',
+                    'https://flibusta.is/i/98/451198/../secret',
+                    'https://flibusta.is/i/98/451198/%2e%2e'):
             with self.assertRaises(ValueError):
                 source.cover_path('451198', url)
 

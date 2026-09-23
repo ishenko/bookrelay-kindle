@@ -147,6 +147,7 @@ static gchar *json_string(const gchar *object, const gchar *key) {
     const gchar *cursor;
     GString *raw;
     gchar *result;
+    gboolean escaped = FALSE;
     g_free(needle);
     if (!start) return g_strdup("");
     cursor = start + strlen(key) + 2;
@@ -156,7 +157,9 @@ static gchar *json_string(const gchar *object, const gchar *key) {
     if (*cursor++ != '"') return g_strdup("");
     raw = g_string_new(NULL);
     while (*cursor) {
-        if (*cursor == '"' && (raw->len == 0 || raw->str[raw->len - 1] != '\\')) break;
+        if (*cursor == '"' && !escaped) break;
+        if (*cursor == '\\' && !escaped) escaped = TRUE;
+        else escaped = FALSE;
         g_string_append_c(raw, *cursor++);
     }
     result = json_unescape(raw->str, raw->len);
@@ -199,15 +202,31 @@ static const gchar *next_json_id(const gchar *cursor) {
     return NULL;
 }
 
+/* Ignore braces inside strings while walking a JSON object. */
+static const gchar *json_object_end(const gchar *cursor) {
+    guint depth = 1;
+    gboolean in_string = FALSE, escaped = FALSE;
+    for (; *cursor; cursor++) {
+        if (in_string) {
+            if (escaped) escaped = FALSE;
+            else if (*cursor == 92) escaped = TRUE;
+            else if (*cursor == '"') in_string = FALSE;
+        } else if (*cursor == '"') in_string = TRUE;
+        else if (*cursor == '{') depth++;
+        else if (*cursor == '}' && --depth == 0) return cursor;
+    }
+    return NULL;
+}
+
 static GPtrArray *parse_books(const gchar *json) {
     GPtrArray *books = g_ptr_array_new_with_free_func((GDestroyNotify)bookrelay_book_free);
     const gchar *cursor = json;
     while ((cursor = next_json_id(cursor)) != NULL) {
-        const gchar *end = strchr(cursor, '}');
+        const gchar *end = json_object_end(cursor);
         gchar *object;
         BookRelayBook *book;
         if (!end) break;
-        object = g_strndup(cursor, (gsize)(end - cursor));
+        object = g_strndup(cursor, (gsize)(end - cursor + 1));
         book = g_new0(BookRelayBook, 1);
         book->id = json_string(object, "id");
         book->title = json_string(object, "title");
@@ -256,7 +275,7 @@ GPtrArray *bookrelay_api_subcategories(const gchar *base_url, const gchar *token
     GPtrArray *items = body ? g_ptr_array_new_with_free_func((GDestroyNotify)bookrelay_category_free) : NULL;
     const gchar *cursor = body;
     while (items && (cursor = next_json_id(cursor)) != NULL) {
-        const gchar *end = strchr(cursor, '}');
+        const gchar *end = json_object_end(cursor);
         BookRelayCategory *item;
         if (!end) break;
         item = g_new0(BookRelayCategory, 1);
@@ -289,7 +308,7 @@ GPtrArray *bookrelay_api_categories(const gchar *base_url, const gchar *token, G
     GPtrArray *items = body ? g_ptr_array_new_with_free_func((GDestroyNotify)bookrelay_category_free) : NULL;
     const gchar *cursor = body;
     while (items && (cursor = next_json_id(cursor)) != NULL) {
-        const gchar *end = strchr(cursor, '}');
+        const gchar *end = json_object_end(cursor);
         BookRelayCategory *category;
         if (!end) break;
         category = g_new0(BookRelayCategory, 1);

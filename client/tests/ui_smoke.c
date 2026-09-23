@@ -423,6 +423,27 @@ int main(int argc, char **argv) {
             g_error("downloaded cover was scaled to a tiny image");
         snapshot(&app, argv[1], "book-list-with-cover.png");
         button = find_data_button(app.results, "book-row");
+        {
+            GPtrArray *many = g_ptr_array_new_with_free_func((GDestroyNotify)bookrelay_book_free);
+            guint i;
+            for (i = 0; i < 12; i++) {
+                BookRelayBook *item = g_new0(BookRelayBook, 1);
+                item->id = g_strdup_printf("%u", 1000 + i);
+                item->title = g_strdup("Cover stress test");
+                item->cover_url = g_strdup_printf("/v1/books/%s/cover?path=%%2Fi%%2F98%%2F%s%%2Fcover.jpg", item->id, item->id);
+                g_ptr_array_add(many, item);
+            }
+            render_books(&app, many);
+            deadline = g_get_monotonic_time() + 10 * G_USEC_PER_SEC;
+            while (app.active_tasks && g_get_monotonic_time() < deadline) {
+                drain_events();
+                g_usleep(10000);
+            }
+            if (app.active_tasks) g_error("bounded cover downloads timed out");
+            render_books(&app, books);
+            g_ptr_array_free(many, TRUE);
+            button = find_data_button(app.results, "book-row");
+        }
     }
     gtk_button_clicked(GTK_BUTTON(button));
     drain_events();

@@ -714,8 +714,28 @@ static gpointer async_task_worker(gpointer userdata) {
     return NULL;
 }
 
+static void cover_task_worker(gpointer task, gpointer unused) {
+    (void)unused;
+    async_task_worker(task);
+}
+
 static gboolean start_async_task(AsyncTask *task) {
     GThread *thread;
+    /* A book page may contain twelve covers. Keep those requests bounded so
+     * slow source images cannot start twelve simultaneous network threads. */
+    if (task->kind == TASK_COVER) {
+        static GThreadPool *cover_pool = NULL;
+        GError *pool_error = NULL;
+        if (!cover_pool) cover_pool = g_thread_pool_new(cover_task_worker, NULL, 3, FALSE, &pool_error);
+        if (cover_pool) {
+            g_thread_pool_push(cover_pool, task, &pool_error);
+            if (!pool_error) return TRUE;
+        }
+        if (pool_error) g_error_free(pool_error);
+        task->app->active_tasks--;
+        async_task_free(task);
+        return FALSE;
+    }
 #if GLIB_CHECK_VERSION(2, 32, 0)
     thread = g_thread_new("bookrelay-network", async_task_worker, task);
 #else

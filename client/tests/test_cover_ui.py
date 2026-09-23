@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -15,18 +16,31 @@ EXPECTED_PATH = "/v1/books/451198/cover?path=%2Fi%2F98%2F451198%2Fcover.jpg"
 def main(binary: str, output: str) -> None:
     jpeg = next((ROOT / "client/share/covers").glob("*.jpg")).read_bytes()
     requests = []
+    active = 0
+    peak = 0
+    lock = threading.Lock()
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
-            requests.append((self.path, self.headers.get("Authorization")))
-            if self.path != EXPECTED_PATH:
+            nonlocal active, peak
+            with lock:
+                requests.append((self.path, self.headers.get("Authorization")))
+                active += 1
+                peak = max(peak, active)
+            if self.path != EXPECTED_PATH and not any(
+                self.path == f"/v1/books/{i}/cover?path=%2Fi%2F98%2F{i}%2Fcover.jpg"
+                for i in range(1000, 1012)
+            ):
                 self.send_error(404)
-                return
-            self.send_response(200)
-            self.send_header("Content-Type", "image/jpeg")
-            self.send_header("Content-Length", str(len(jpeg)))
-            self.end_headers()
-            self.wfile.write(jpeg)
+            else:
+                time.sleep(0.08)
+                self.send_response(200)
+                self.send_header("Content-Type", "image/jpeg")
+                self.send_header("Content-Length", str(len(jpeg)))
+                self.end_headers()
+                self.wfile.write(jpeg)
+            with lock:
+                active -= 1
 
         def log_message(self, *_args):
             pass
@@ -43,7 +57,10 @@ def main(binary: str, output: str) -> None:
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
-    assert requests == [(EXPECTED_PATH, "Bearer smoke-test-token")], requests
+    assert len(requests) == 13, requests
+    assert requests[0] == (EXPECTED_PATH, "Bearer smoke-test-token"), requests
+    assert all(auth == "Bearer smoke-test-token" for _, auth in requests), requests
+    assert peak <= 3, peak
     assert (Path(output) / "book-list-with-cover.png").is_file()
 
 

@@ -4,11 +4,12 @@ import zipfile
 from datetime import datetime, timedelta
 from io import BytesIO
 from pathlib import Path
+from unittest.mock import patch
 
 import httpx
 
 from bookrelay.delivery import build_epub_email
-from bookrelay.main import create_app
+from bookrelay.main import RateLimiter, create_app
 from bookrelay.models import Book
 from bookrelay.pairing import PairingStore
 from bookrelay.source.flibusta import FlibustaSource, SourceUnavailable
@@ -51,6 +52,21 @@ class FakeMailer:
 
     def send(self, recipient, filename, payload):
         self.sent.append((recipient, filename, payload))
+
+
+class RateLimiterTests(unittest.TestCase):
+    def test_expired_clients_are_removed_without_resetting_longer_limits(self):
+        limiter = RateLimiter()
+        with patch("bookrelay.main.monotonic", return_value=0):
+            self.assertTrue(limiter.allow("delivery:reader", 1, 3600))
+            self.assertTrue(limiter.allow("categories:expired", 1, 60))
+        with patch("bookrelay.main.monotonic", return_value=61):
+            for i in range(254):
+                self.assertTrue(limiter.allow(f"categories:new-{i}", 1, 60))
+            self.assertNotIn("categories:expired", limiter.events)
+            self.assertFalse(limiter.allow("delivery:reader", 1, 3600))
+        with patch("bookrelay.main.monotonic", return_value=3601):
+            self.assertTrue(limiter.allow("delivery:reader", 1, 3600))
 
 
 class ApiTests(unittest.IsolatedAsyncioTestCase):

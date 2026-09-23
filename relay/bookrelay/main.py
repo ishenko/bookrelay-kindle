@@ -4,7 +4,8 @@ import secrets
 from pathlib import Path
 from urllib.parse import quote
 
-from collections import defaultdict, deque
+from collections import deque
+from threading import Lock
 from time import monotonic
 
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query, Request
@@ -140,17 +141,30 @@ def _token(authorization: str | None):
 
 class RateLimiter:
     def __init__(self):
-        self.events = defaultdict(deque)
+        self.events = {}
+        self.expires = {}
+        self.lock = Lock()
+        self.calls = 0
 
     def allow(self, key: str, limit: int, window: float) -> bool:
         now = monotonic()
-        bucket = self.events[key]
-        while bucket and bucket[0] <= now - window:
-            bucket.popleft()
-        if len(bucket) >= limit:
-            return False
-        bucket.append(now)
-        return True
+        with self.lock:
+            self.calls += 1
+            if self.calls % 256 == 0:
+                # Public endpoints can see a new address on every request.
+                # Discard expired address buckets instead of retaining them forever.
+                for address, expires_at in list(self.expires.items()):
+                    if expires_at <= now:
+                        del self.events[address]
+                        del self.expires[address]
+            bucket = self.events.setdefault(key, deque())
+            while bucket and bucket[0] <= now - window:
+                bucket.popleft()
+            if len(bucket) >= limit:
+                return False
+            bucket.append(now)
+            self.expires[key] = now + window
+            return True
 
 
 def create_app(db_path: Path | str | None = None, source=None, mailer=None, pairing_admin_key: str | None = None, default_kindle_email: str | None = None, delivery_enabled: bool | None = None) -> FastAPI:

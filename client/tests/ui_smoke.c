@@ -26,6 +26,16 @@ static void expect_inside_window(App *app, GtkWidget *widget, const char *name) 
                 widget->allocation.width, widget->allocation.height, width, height);
 }
 
+static void expect_inside_results_viewport(App *app, GtkWidget *widget) {
+    GtkWidget *viewport = gtk_widget_get_parent(app->results);
+    gint x = 0, y = 0;
+    if (!gtk_widget_translate_coordinates(widget, viewport, 0, 0, &x, &y) ||
+        x < 0 || y < 0 ||
+        x + widget->allocation.width > viewport->allocation.width ||
+        y + widget->allocation.height > viewport->allocation.height)
+        g_error("book action is clipped by the results viewport");
+}
+
 static GtkWidget *find_button(GtkWidget *root, const gchar *label) {
     GList *children, *item;
     GtkWidget *found = NULL;
@@ -44,6 +54,11 @@ static void snapshot(App *app, const gchar *dir, const char *name) {
     gchar *path = g_build_filename(dir, name, NULL);
     GError *error = NULL;
     drain_events();
+    if (app->window->allocation.width != gdk_screen_width() ||
+        app->window->allocation.height != gdk_screen_height())
+        g_error("%s window exceeds screen: %dx%d instead of %dx%d", name,
+                app->window->allocation.width, app->window->allocation.height,
+                gdk_screen_width(), gdk_screen_height());
     pixels = gdk_pixbuf_get_from_drawable(NULL, GDK_DRAWABLE(app->window->window),
                                           NULL, 0, 0, 0, 0,
                                           app->window->allocation.width,
@@ -113,6 +128,7 @@ int main(int argc, char **argv) {
     button = find_button(app.results, "Подробнее");
     if (!button) g_error("book card has no details button");
     expect_inside_window(&app, button, "book details button");
+    expect_inside_results_viewport(&app, button);
     snapshot(&app, argv[1], "book-list.png");
     gtk_button_clicked(GTK_BUTTON(button));
     drain_events();

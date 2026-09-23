@@ -56,9 +56,15 @@ typedef struct { App *app; gchar *id; gchar *title; } CategoryRow;
 
 typedef struct {
     GtkWidget *root;
+    GtkWidget *native_spacer;
+    GtkWidget *bottom_widget;
+    GtkWidget *symbols_button;
     GtkEntry *target;
     gboolean cyrillic;
     gboolean shift;
+    gboolean symbols;
+    gboolean native_open;
+    gboolean native_unavailable;
     GPtrArray *letter_buttons;
 } VirtualKeyboard;
 
@@ -138,8 +144,27 @@ static void set_large_font(GtkWidget *widget, const gchar *description);
 static void settings_clicked(GtkButton *button, gpointer userdata);
 static void exit_clicked(GtkButton *button, gpointer userdata);
 
+static gboolean kindle_keyboard_property(const gchar *property, const gchar *value) {
+    const gchar *path = g_getenv("BOOKRELAY_LIPC_SET_PROP");
+    gchar *argv[6];
+    gint status = -1;
+    if (!path || !*path) path = "/usr/bin/lipc-set-prop";
+    if (!g_file_test(path, G_FILE_TEST_IS_EXECUTABLE)) return FALSE;
+    argv[0] = (gchar *)path;
+    argv[1] = "-s";
+    argv[2] = "com.lab126.keyboard";
+    argv[3] = (gchar *)property;
+    argv[4] = (gchar *)value;
+    argv[5] = NULL;
+    return g_spawn_sync(NULL, argv, NULL,
+                        G_SPAWN_STDOUT_TO_DEV_NULL | G_SPAWN_STDERR_TO_DEV_NULL,
+                        NULL, NULL, NULL, NULL, &status, NULL) && status == 0;
+}
+
 static void virtual_keyboard_free(VirtualKeyboard *keyboard) {
     if (!keyboard) return;
+    if (keyboard->native_open)
+        kindle_keyboard_property("close", "bookrelay.kindle");
     if (keyboard->letter_buttons) g_ptr_array_free(keyboard->letter_buttons, TRUE);
     g_free(keyboard);
 }
@@ -151,8 +176,9 @@ static void virtual_keyboard_set_labels(VirtualKeyboard *keyboard) {
         GtkWidget *button = g_ptr_array_index(keyboard->letter_buttons, i);
         const gchar *latin = g_object_get_data(G_OBJECT(button), "bookrelay-key-latin");
         const gchar *cyrillic = g_object_get_data(G_OBJECT(button), "bookrelay-key-cyrillic");
-        const gchar *label = keyboard->cyrillic ? cyrillic : latin;
-        gchar *display = keyboard->shift ? g_utf8_strup(label, -1) : g_strdup(label);
+        const gchar *symbol = g_object_get_data(G_OBJECT(button), "bookrelay-key-symbol");
+        const gchar *label = keyboard->symbols ? symbol : (keyboard->cyrillic ? cyrillic : latin);
+        gchar *display = keyboard->shift && !keyboard->symbols ? g_utf8_strup(label, -1) : g_strdup(label);
         gtk_button_set_label(GTK_BUTTON(button), display);
         set_large_font(button, "Sans 24");
         g_free(display);
@@ -160,12 +186,65 @@ static void virtual_keyboard_set_labels(VirtualKeyboard *keyboard) {
 }
 
 static void virtual_keyboard_show_for(VirtualKeyboard *keyboard, GtkEntry *entry) {
+    GList *children, *item;
+    GtkWidget *parent;
+    gboolean native;
     if (!keyboard || !entry) return;
     keyboard->target = entry;
+    /* Prefer the device keyboard when LIPC is available. The built-in one is
+     * still available if LIPC fails or the user explicitly chooses it. */
+    native = g_strcmp0(g_getenv("BOOKRELAY_KEYBOARD"), "custom") != 0 &&
+             !keyboard->native_unavailable;
+    if (native && !keyboard->native_open) {
+        keyboard->native_open = kindle_keyboard_property("open", "bookrelay.kindle:abc:0");
+        if (!keyboard->native_open) keyboard->native_unavailable = TRUE;
+    }
+    native = native && keyboard->native_open;
+    children = gtk_container_get_children(GTK_CONTAINER(keyboard->root));
+    for (item = children; item; item = item->next) {
+        GtkWidget *row = item->data;
+        if (row == keyboard->native_spacer) continue;
+        gtk_widget_set_no_show_all(row, native);
+        if (native) gtk_widget_hide(row);
+        else gtk_widget_show_all(row);
+    }
+    g_list_free(children);
+    if (native) gtk_widget_show(keyboard->native_spacer);
+    else gtk_widget_hide(keyboard->native_spacer);
+    parent = gtk_widget_get_parent(keyboard->root);
+    if (keyboard->bottom_widget && parent && GTK_IS_BOX(parent)) {
+        gint keyboard_index, bottom_index;
+        children = gtk_container_get_children(GTK_CONTAINER(parent));
+        keyboard_index = g_list_index(children, keyboard->root);
+        bottom_index = g_list_index(children, keyboard->bottom_widget);
+        if (native && bottom_index > keyboard_index)
+            gtk_box_reorder_child(GTK_BOX(parent), keyboard->bottom_widget, keyboard_index);
+        else if (!native && keyboard_index > bottom_index)
+            gtk_box_reorder_child(GTK_BOX(parent), keyboard->root, bottom_index);
+        g_list_free(children);
+    }
     /* no-show-all keeps this hidden when a page is shown. Its children were
      * shown at construction; show() explicitly reveals the keyboard itself. */
     gtk_widget_show(keyboard->root);
-    virtual_keyboard_set_labels(keyboard);
+    if (!native) virtual_keyboard_set_labels(keyboard);
+}
+
+static void virtual_keyboard_hide(VirtualKeyboard *keyboard) {
+    if (!keyboard) return;
+    if (keyboard->native_open) {
+        kindle_keyboard_property("close", "bookrelay.kindle");
+        keyboard->native_open = FALSE;
+    }
+    gtk_widget_hide(keyboard->root);
+}
+
+static void virtual_keyboard_use_custom(GtkButton *button, gpointer userdata) {
+    VirtualKeyboard *keyboard = userdata;
+    GtkEntry *target = keyboard->target;
+    virtual_keyboard_hide(keyboard);
+    keyboard->native_unavailable = TRUE;
+    virtual_keyboard_show_for(keyboard, target);
+    gtk_widget_grab_focus(GTK_WIDGET(target));
 }
 
 static gboolean virtual_keyboard_focus_in(GtkWidget *widget, GdkEventFocus *event, gpointer userdata) {
@@ -233,18 +312,31 @@ static void virtual_keyboard_clicked(GtkButton *button, gpointer userdata) {
     } else if (g_strcmp0(key, "shift") == 0) {
         keyboard->shift = !keyboard->shift;
         virtual_keyboard_set_labels(keyboard);
+    } else if (g_strcmp0(key, "symbols") == 0) {
+        keyboard->symbols = !keyboard->symbols;
+        keyboard->shift = FALSE;
+        gtk_button_set_label(button, keyboard->symbols ? "АБВ" : "?123");
+        virtual_keyboard_set_labels(keyboard);
     } else if (g_strcmp0(key, "language") == 0) {
         keyboard->cyrillic = !keyboard->cyrillic;
+        keyboard->symbols = FALSE;
         keyboard->shift = FALSE;
         gtk_button_set_label(button, keyboard->cyrillic ? "EN" : "РУС");
-        set_large_font(GTK_WIDGET(button), "Sans 18");
+        gtk_button_set_label(GTK_BUTTON(keyboard->symbols_button), "?123");
+        set_large_font(GTK_WIDGET(button), "Sans 15");
         virtual_keyboard_set_labels(keyboard);
     } else if (g_strcmp0(key, "done") == 0) {
-        gtk_widget_hide(keyboard->root);
+        virtual_keyboard_hide(keyboard);
     } else if (g_strcmp0(key, "enter") == 0) {
         if (keyboard->target) g_signal_emit_by_name(keyboard->target, "activate");
-        gtk_widget_hide(keyboard->root);
+        virtual_keyboard_hide(keyboard);
     } else {
+        const gchar *letter = g_object_get_data(G_OBJECT(button), "bookrelay-key-latin");
+        if (letter)
+            key = keyboard->symbols
+                ? g_object_get_data(G_OBJECT(button), "bookrelay-key-symbol")
+                : (keyboard->cyrillic ? g_object_get_data(G_OBJECT(button), "bookrelay-key-cyrillic") : letter);
+        if (g_strcmp0(key, "https://") == 0) keyboard->shift = FALSE;
         virtual_keyboard_insert(keyboard, key);
         if (keyboard->shift) {
             keyboard->shift = FALSE;
@@ -263,10 +355,11 @@ static GtkWidget *virtual_keyboard_button(VirtualKeyboard *keyboard, const gchar
     return button;
 }
 
-static GtkWidget *virtual_keyboard_letter(VirtualKeyboard *keyboard, const gchar *latin, const gchar *cyrillic) {
+static GtkWidget *virtual_keyboard_letter(VirtualKeyboard *keyboard, const gchar *latin, const gchar *cyrillic, const gchar *symbol) {
     GtkWidget *button = virtual_keyboard_button(keyboard, latin, latin);
     g_object_set_data(G_OBJECT(button), "bookrelay-key-latin", (gpointer)latin);
     g_object_set_data(G_OBJECT(button), "bookrelay-key-cyrillic", (gpointer)cyrillic);
+    g_object_set_data(G_OBJECT(button), "bookrelay-key-symbol", (gpointer)symbol);
     g_ptr_array_add(keyboard->letter_buttons, button);
     return button;
 }
@@ -278,13 +371,17 @@ static void virtual_keyboard_pack_row(GtkWidget *root, GtkWidget *row) {
 static VirtualKeyboard *virtual_keyboard_new(GtkWidget *parent, GtkEntry *initial_target) {
     static const gchar *latin_row_1[] = {"q", "w", "e", "r", "t", "y", "u", "i", "o", "p"};
     static const gchar *cyrillic_row_1[] = {"й", "ц", "у", "к", "е", "н", "г", "ш", "щ", "з"};
+    static const gchar *symbol_row_1[] = {"!", "@", "#", "$", "%", "^", "&", "*", "(", ")"};
     static const gchar *latin_row_2[] = {"a", "s", "d", "f", "g", "h", "j", "k", "l"};
     static const gchar *cyrillic_row_2[] = {"ф", "ы", "в", "а", "п", "р", "о", "л", "д"};
+    static const gchar *symbol_row_2[] = {"-", "_", "=", "+", "[", "]", "{", "}", ":"};
     static const gchar *latin_row_3[] = {"z", "x", "c", "v", "b", "n", "m"};
     static const gchar *cyrillic_row_3[] = {"я", "ч", "с", "м", "и", "т", "ь"};
+    static const gchar *symbol_row_3[] = {";", "'", "\"", "?", "\\", "<", ">"};
     VirtualKeyboard *keyboard = g_new0(VirtualKeyboard, 1);
     GtkWidget *row;
     GtkWidget *button;
+    GtkWidget *fallback_alignment;
     guint i;
     keyboard->root = gtk_vbox_new(FALSE, 1);
     keyboard->target = initial_target;
@@ -294,21 +391,21 @@ static VirtualKeyboard *virtual_keyboard_new(GtkWidget *parent, GtkEntry *initia
 
     row = gtk_hbox_new(TRUE, 1);
     for (i = 0; i < 10; i++) {
-        button = virtual_keyboard_letter(keyboard, latin_row_1[i], cyrillic_row_1[i]);
+        button = virtual_keyboard_letter(keyboard, latin_row_1[i], cyrillic_row_1[i], symbol_row_1[i]);
         gtk_box_pack_start(GTK_BOX(row), button, TRUE, TRUE, 0);
     }
     virtual_keyboard_pack_row(keyboard->root, row);
 
     row = gtk_hbox_new(TRUE, 1);
     for (i = 0; i < 9; i++) {
-        button = virtual_keyboard_letter(keyboard, latin_row_2[i], cyrillic_row_2[i]);
+        button = virtual_keyboard_letter(keyboard, latin_row_2[i], cyrillic_row_2[i], symbol_row_2[i]);
         gtk_box_pack_start(GTK_BOX(row), button, TRUE, TRUE, 0);
     }
     virtual_keyboard_pack_row(keyboard->root, row);
 
     row = gtk_hbox_new(TRUE, 1);
     for (i = 0; i < 7; i++) {
-        button = virtual_keyboard_letter(keyboard, latin_row_3[i], cyrillic_row_3[i]);
+        button = virtual_keyboard_letter(keyboard, latin_row_3[i], cyrillic_row_3[i], symbol_row_3[i]);
         gtk_box_pack_start(GTK_BOX(row), button, TRUE, TRUE, 0);
     }
     button = virtual_keyboard_button(keyboard, ".", ".");
@@ -330,24 +427,44 @@ static VirtualKeyboard *virtual_keyboard_new(GtkWidget *parent, GtkEntry *initia
     virtual_keyboard_pack_row(keyboard->root, row);
 
     row = gtk_hbox_new(TRUE, 1);
+    button = virtual_keyboard_button(keyboard, "https://", "https://");
+    set_large_font(button, "Sans 15");
+    gtk_box_pack_start(GTK_BOX(row), button, TRUE, TRUE, 0);
     button = virtual_keyboard_button(keyboard, "РУС", "language");
-    set_large_font(button, "Sans 18");
+    set_large_font(button, "Sans 15");
     gtk_box_pack_start(GTK_BOX(row), button, TRUE, TRUE, 0);
     button = virtual_keyboard_button(keyboard, "Shift", "shift");
-    set_large_font(button, "Sans 18");
+    set_large_font(button, "Sans 15");
+    gtk_box_pack_start(GTK_BOX(row), button, TRUE, TRUE, 0);
+    button = virtual_keyboard_button(keyboard, "?123", "symbols");
+    keyboard->symbols_button = button;
+    set_large_font(button, "Sans 15");
     gtk_box_pack_start(GTK_BOX(row), button, TRUE, TRUE, 0);
     button = virtual_keyboard_button(keyboard, "Пробел", "space");
-    set_large_font(button, "Sans 18");
+    set_large_font(button, "Sans 15");
     gtk_box_pack_start(GTK_BOX(row), button, TRUE, TRUE, 0);
     button = virtual_keyboard_button(keyboard, "Удалить", "backspace");
-    set_large_font(button, "Sans 18");
+    set_large_font(button, "Sans 15");
     gtk_box_pack_start(GTK_BOX(row), button, TRUE, TRUE, 0);
     button = virtual_keyboard_button(keyboard, "Готово", "done");
-    set_large_font(button, "Sans 18");
+    set_large_font(button, "Sans 15");
     gtk_box_pack_start(GTK_BOX(row), button, TRUE, TRUE, 0);
     virtual_keyboard_pack_row(keyboard->root, row);
 
+    keyboard->native_spacer = gtk_event_box_new();
+    gtk_widget_set_size_request(keyboard->native_spacer, -1,
+                                gdk_screen_get_height(gdk_screen_get_default()) * 35 / 100);
+    button = gtk_button_new_with_label("Клавиатура BookRelay");
+    make_touch_target(button, 320, 50);
+    set_large_font(button, "Sans 14");
+    g_signal_connect(button, "clicked", G_CALLBACK(virtual_keyboard_use_custom), keyboard);
+    fallback_alignment = gtk_alignment_new(0.5, 0.0, 0.0, 0.0);
+    gtk_container_add(GTK_CONTAINER(fallback_alignment), button);
+    gtk_container_add(GTK_CONTAINER(keyboard->native_spacer), fallback_alignment);
+    gtk_box_pack_start(GTK_BOX(keyboard->root), keyboard->native_spacer, FALSE, FALSE, 0);
     gtk_widget_show_all(keyboard->root);
+    gtk_widget_hide(keyboard->native_spacer);
+    gtk_widget_set_no_show_all(keyboard->native_spacer, TRUE);
     gtk_widget_hide(keyboard->root);
     gtk_widget_set_no_show_all(keyboard->root, TRUE);
     if (parent) gtk_box_pack_start(GTK_BOX(parent), keyboard->root, FALSE, FALSE, 2);
@@ -361,6 +478,10 @@ static void set_kindle_dialog_role(GtkWidget *dialog) {
 
 static void set_large_font(GtkWidget *widget, const gchar *description) {
     PangoFontDescription *font = pango_font_description_from_string(description);
+    /* Pango strings use points; Kindle reports a high DPI and would triple
+     * their pixel size. Keep the size seen in our 96-DPI layout previews. */
+    pango_font_description_set_absolute_size(font,
+        pango_font_description_get_size(font) * (96.0 / 72.0));
     gtk_widget_modify_font(widget, font);
     /* GtkButton owns a GtkLabel; GTK2 does not inherit the button font. */
     if (GTK_IS_BUTTON(widget) && gtk_bin_get_child(GTK_BIN(widget)))
@@ -413,8 +534,8 @@ static GtkWidget *ink_header(const gchar *eyebrow, const gchar *heading) {
     ink_background(background, "#111111");
     ink_text(overline, "#ffffff");
     ink_text(title, "#ffffff");
-    set_large_font(overline, "Sans Bold 12");
-    set_large_font(title, "Sans Bold 28");
+    set_large_font(overline, "Sans 12");
+    set_large_font(title, "Sans 26");
     gtk_misc_set_alignment(GTK_MISC(overline), 0, 0.5);
     gtk_misc_set_alignment(GTK_MISC(title), 0, 0.5);
     gtk_label_set_line_wrap(GTK_LABEL(title), TRUE);
@@ -477,6 +598,9 @@ static GtkWidget *new_kindle_page(App *app, const gchar *heading, GtkWidget **bo
     ink_background(gtk_bin_get_child(GTK_BIN(scroll)), "#ffffff");
     gtk_box_pack_start(GTK_BOX(root), scroll, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(root), actions, FALSE, FALSE, 0);
+    g_object_set_data(G_OBJECT(root), "bookrelay-page-actions", actions);
+    if (app->keyboard)
+        virtual_keyboard_hide(g_object_get_data(G_OBJECT(app->keyboard), "bookrelay-keyboard-state"));
     gtk_notebook_append_page(GTK_NOTEBOOK(app->pages), root, NULL);
     g_signal_connect(root, "destroy", G_CALLBACK(page_window_destroyed), app);
     g_signal_connect(root, "destroy", G_CALLBACK(keep_setup_open), app);
@@ -492,6 +616,7 @@ static GtkWidget *new_kindle_page(App *app, const gchar *heading, GtkWidget **bo
 
 static void attach_page_keyboard(GtkWidget *page_root, VirtualKeyboard *keyboard) {
     if (!page_root || !keyboard || !keyboard->root) return;
+    keyboard->bottom_widget = g_object_get_data(G_OBJECT(page_root), "bookrelay-page-actions");
     gtk_box_pack_start(GTK_BOX(page_root), keyboard->root, FALSE, FALSE, 4);
     gtk_box_reorder_child(GTK_BOX(page_root), keyboard->root, 2);
 }
@@ -1096,7 +1221,8 @@ static void search_page(App *app, guint page) {
         set_status(app, "Подключите relay в настройках для поиска книг");
         return;
     }
-    if (app->keyboard) gtk_widget_hide(app->keyboard);
+    if (app->keyboard)
+        virtual_keyboard_hide(g_object_get_data(G_OBJECT(app->keyboard), "bookrelay-keyboard-state"));
     set_status(app, "Ищем книги…");
     app->view = VIEW_SEARCH;
     app->page = page;
@@ -1178,7 +1304,8 @@ static void navigate_view(App *app, guint view, guint page) {
     app->generation++;
     gtk_widget_hide(app->search_row);
     gtk_widget_show(app->header_title);
-    if (app->keyboard) gtk_widget_hide(app->keyboard);
+    if (app->keyboard)
+        virtual_keyboard_hide(g_object_get_data(G_OBJECT(app->keyboard), "bookrelay-keyboard-state"));
     update_breadcrumbs(app);
     if (view == VIEW_CATEGORIES) gtk_label_set_text(GTK_LABEL(app->section_title), "Категории");
     else if (view == VIEW_SUBCATEGORIES) gtk_label_set_text(GTK_LABEL(app->section_title), app->category_title);
@@ -1402,8 +1529,8 @@ static void settings_clicked(GtkButton *button, gpointer userdata) {
     gtk_misc_set_alignment(GTK_MISC(hint), 0, 0.5);
     gtk_misc_set_alignment(GTK_MISC(relay_label), 0, 0.5);
     gtk_misc_set_alignment(GTK_MISC(email_label), 0, 0.5);
-    set_large_font(relay_label, "Sans Bold 18");
-    set_large_font(email_label, "Sans Bold 18");
+    set_large_font(relay_label, "Sans 17");
+    set_large_font(email_label, "Sans 17");
     set_large_font(hint, "Sans 16");
     set_large_font(GTK_WIDGET(page->relay), "Sans 20");
     set_large_font(GTK_WIDGET(page->email), "Sans 20");
@@ -1672,6 +1799,7 @@ static gboolean exit_icon_pressed(GtkWidget *widget, GdkEventButton *event, gpoi
 }
 
 static void build_ui(App *app) {
+    VirtualKeyboard *main_keyboard;
     GtkWidget *root = gtk_vbox_new(FALSE, 8);
     GtkWidget *shell = gtk_vbox_new(FALSE, 0);
     GtkWidget *header = gtk_hbox_new(FALSE, gdk_screen_get_width(gdk_screen_get_default()) < 1000 ? 4 : 10);
@@ -1794,7 +1922,9 @@ static void build_ui(App *app) {
     gtk_box_pack_start(GTK_BOX(root), gtk_hseparator_new(), FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(root), section, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(root), app->results, TRUE, TRUE, 0);
-    app->keyboard = virtual_keyboard_new(root, GTK_ENTRY(app->query))->root;
+    main_keyboard = virtual_keyboard_new(root, GTK_ENTRY(app->query));
+    app->keyboard = main_keyboard->root;
+    main_keyboard->bottom_widget = navigation;
     gtk_box_pack_end(GTK_BOX(root), navigation, FALSE, FALSE, 0);
     gtk_box_pack_end(GTK_BOX(root), gtk_hseparator_new(), FALSE, FALSE, 0);
     gtk_container_set_border_width(GTK_CONTAINER(root), 18);

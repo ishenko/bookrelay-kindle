@@ -58,7 +58,7 @@ After a new GitHub Release, update the installed package with:
 
 To prepare the package offline, copy the whole bookrelay-kpm folder from the
 release files to the Kindle USB root. It must contain manifest.json and
-packages/bookrelay-kindle_0.1.8_kindlehf.kpkg. Then run:
+packages/bookrelay-kindle_0.1.9_kindlehf.kpkg. Then run:
 
     kpm add-repo file:///mnt/us/bookrelay-kpm/manifest.json
     kpm update
@@ -73,6 +73,13 @@ For maintainers, build the client with the Kindle SDK and its kindlehf cross fil
 Copy the resulting package to Kindle user storage and install it using the KPM package manager available in the jailbreak environment. The package contains only a user-storage application and hooks. Follow the removal instructions in docs/KINDLE-SETUP.md if you need to roll back.
 
 This repository does not claim a local macOS build is a Kindle SDK build. CI runs both a host Linux integration build and a real kindlehf cross-build; release artifacts are produced from the latter.
+
+On Kindle, text fields request the device's own on-screen keyboard. If it does
+not appear, tap **Клавиатура BookRelay** above the keyboard area to use the
+built-in fallback, which includes an HTTPS prefix key and a symbols layout.
+On desktop or if Kindle's keyboard service is unavailable, the fallback opens
+automatically. Set BOOKRELAY_KEYBOARD=custom to use it from the start.
+The system keyboard integration still needs a physical-device input check.
 
 ## Development
 

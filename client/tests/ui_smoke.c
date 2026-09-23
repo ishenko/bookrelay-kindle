@@ -39,6 +39,33 @@ static GtkWidget *find_button(GtkWidget *root, const gchar *label) {
     return found;
 }
 
+static void press_key(GtkWidget *keyboard, const gchar *label) {
+    GtkWidget *button = find_button(keyboard, label);
+    if (!button) g_error("keyboard has no %s key", label);
+    gtk_button_clicked(GTK_BUTTON(button));
+}
+
+static void expect_keyboard_labels_fit(GtkWidget *keyboard) {
+    GList *rows = gtk_container_get_children(GTK_CONTAINER(keyboard));
+    GList *row;
+    for (row = rows; row; row = row->next) {
+        if (!GTK_IS_BOX(row->data)) continue;
+        GList *buttons = gtk_container_get_children(GTK_CONTAINER(row->data));
+        GList *item;
+        for (item = buttons; item; item = item->next) {
+            GtkWidget *button = item->data;
+            GtkWidget *label = gtk_bin_get_child(GTK_BIN(button));
+            gint width;
+            pango_layout_get_pixel_size(gtk_label_get_layout(GTK_LABEL(label)), &width, NULL);
+            if (width + 8 > button->allocation.width)
+                g_error("keyboard key %s clipped: %d in %d", gtk_button_get_label(GTK_BUTTON(button)),
+                        width, button->allocation.width);
+        }
+        g_list_free(buttons);
+    }
+    g_list_free(rows);
+}
+
 static GtkWidget *find_data_button(GtkWidget *root, const gchar *key) {
     GList *children, *item;
     GtkWidget *found = NULL;
@@ -84,6 +111,8 @@ int main(int argc, char **argv) {
     DetailsPage *details;
     if (argc != 2) g_error("usage: ui-smoke <screenshot-directory>");
     gtk_init(&argc, &argv);
+    if (g_getenv("BOOKRELAY_TEST_DPI"))
+        gdk_screen_set_resolution(gdk_screen_get_default(), 300.0);
     curl_global_init(CURL_GLOBAL_DEFAULT);
     app.config = g_new0(BookRelayConfig, 1);
     app.config->relay_url = g_strdup("");
@@ -93,13 +122,62 @@ int main(int argc, char **argv) {
     drain_events();
     settings = g_object_get_data(G_OBJECT(app.page_window), "bookrelay-settings-page");
     if (!settings) g_error("setup screen did not open on first launch");
+    if (g_getenv("BOOKRELAY_TEST_NATIVE")) {
+        gint actions_y, keyboard_y;
+        GtkWidget *actions = g_object_get_data(G_OBJECT(settings->window), "bookrelay-page-actions");
+        if (!settings->keyboard->native_open)
+            g_error("Kindle keyboard open command failed");
+        if (!GTK_WIDGET_VISIBLE(settings->keyboard->native_spacer))
+            g_error("Kindle keyboard space was not reserved");
+        if (!gtk_widget_translate_coordinates(actions, app.window, 0, 0, NULL, &actions_y) ||
+            !gtk_widget_translate_coordinates(settings->keyboard->root, app.window, 0, 0, NULL, &keyboard_y) ||
+            actions_y >= keyboard_y)
+            g_error("settings actions should remain above Kindle keyboard: actions y=%d, keyboard y=%d",
+                    actions_y, keyboard_y);
+        expect_inside_window(&app, actions, "settings actions with Kindle keyboard");
+        snapshot(&app, argv[1], "settings-native.png");
+        press_key(settings->keyboard->root, "Клавиатура BookRelay");
+        if (!GTK_WIDGET_VISIBLE(g_ptr_array_index(settings->keyboard->letter_buttons, 0)))
+            g_error("built-in keyboard fallback did not open");
+        if (settings->keyboard->native_open) g_error("Kindle keyboard did not close");
+        press_key(settings->keyboard->root, "https://");
+        if (g_strcmp0(gtk_entry_get_text(settings->relay), "https://") != 0)
+            g_error("keyboard fallback cannot enter HTTPS");
+        gtk_widget_destroy(app.window);
+        bookrelay_config_free(app.config);
+        g_free(app.config_path);
+        curl_global_cleanup();
+        return 0;
+    }
     expect_visible(settings->keyboard->root, "settings keyboard");
     expect_inside_window(&app, GTK_WIDGET(settings->relay), "settings relay field");
     expect_inside_window(&app, settings->keyboard->root, "settings keyboard");
+    expect_keyboard_labels_fit(settings->keyboard->root);
     snapshot(&app, argv[1], "settings.png");
     gtk_button_clicked(GTK_BUTTON(g_ptr_array_index(settings->keyboard->letter_buttons, 0)));
     if (g_strcmp0(gtk_entry_get_text(settings->relay), "q") != 0)
         g_error("settings keyboard did not insert text");
+    gtk_entry_set_text(settings->relay, "");
+    press_key(settings->keyboard->root, "https://");
+    {
+        const gchar *suffix = "example.org/opds";
+        while (*suffix) {
+            gchar key[2] = {*suffix++, 0};
+            press_key(settings->keyboard->root, key);
+        }
+    }
+    if (g_strcmp0(gtk_entry_get_text(settings->relay), "https://example.org/opds") != 0)
+        g_error("keyboard cannot enter a complete HTTPS URL");
+    press_key(settings->keyboard->root, "?123");
+    press_key(settings->keyboard->root, ":");
+    if (g_strcmp0(gtk_entry_get_text(settings->relay), "https://example.org/opds:") != 0)
+        g_error("symbols mode did not insert a colon");
+    press_key(settings->keyboard->root, "РУС");
+    if (!find_button(settings->keyboard->root, "?123"))
+        g_error("symbols button was not reset after language switch");
+    press_key(settings->keyboard->root, "й");
+    if (!g_str_has_suffix(gtk_entry_get_text(settings->relay), ":й"))
+        g_error("Russian keyboard inserted the wrong character");
 
     settings_pair_clicked(NULL, settings);
     drain_events();

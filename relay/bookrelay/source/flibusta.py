@@ -1,4 +1,5 @@
 import html
+import http.client
 import re
 from collections import OrderedDict
 from urllib.error import HTTPError, URLError
@@ -112,7 +113,7 @@ class FlibustaSource:
                 if len(payload) > 25 * 1024 * 1024:
                     raise SourceUnavailable("Flibusta response exceeds 25 MiB")
                 return payload
-        except (HTTPError, URLError, OSError, TimeoutError) as exc:
+        except (HTTPError, URLError, OSError, TimeoutError, http.client.HTTPException) as exc:
             raise SourceUnavailable("Flibusta did not respond; please retry") from exc
 
     def search(self, query: str, page: int = 1, category: str | None = None) -> list[Book]:
@@ -194,7 +195,7 @@ class FlibustaSource:
                                 root.remove(element)
                     if len(books) >= needed:
                         break
-        except (HTTPError, URLError, OSError, TimeoutError) as exc:
+        except (HTTPError, URLError, OSError, TimeoutError, http.client.HTTPException) as exc:
             raise SourceUnavailable("Flibusta did not respond; please retry") from exc
         except ET.ParseError as exc:
             raise SourceUnavailable("Flibusta returned an invalid catalog") from exc

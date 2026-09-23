@@ -1,10 +1,32 @@
 import unittest
+from http.client import IncompleteRead
 from unittest.mock import patch
 
 from bookrelay.source.flibusta import FlibustaSource, SourceUnavailable, parse_opds_feed, parse_search_page
 
 
 class FlibustaParserTests(unittest.TestCase):
+    def test_truncated_catalog_connection_is_source_outage(self):
+        class TruncatedResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self, limit):
+                raise IncompleteRead(b"<feed")
+
+            def read1(self, limit):
+                raise IncompleteRead(b"<feed")
+
+        with patch("bookrelay.source.flibusta.urlopen", return_value=TruncatedResponse()):
+            source = FlibustaSource()
+            with self.assertRaisesRegex(SourceUnavailable, "did not respond"):
+                source.categories()
+            with self.assertRaisesRegex(SourceUnavailable, "did not respond"):
+                source.catalog_books("/opds/genres/A", "/opds/genres/A/1")
+
     def test_oversized_source_response_is_reported_as_unavailable(self):
         class OversizedResponse:
             def __enter__(self):

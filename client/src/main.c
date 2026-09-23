@@ -1045,6 +1045,10 @@ static void category_clicked(GtkButton *button, gpointer userdata) {
         set_status(app, "Откройте настройки и подключите relay, чтобы открыть категорию");
         return;
     }
+    if (g_strcmp0(app->category_id, row->id) != 0 && app->subcategories) {
+        g_ptr_array_free(app->subcategories, TRUE);
+        app->subcategories = NULL;
+    }
     g_free(app->category_id); g_free(app->category_title);
     app->category_id = g_strdup(row->id);
     app->category_title = g_strdup(row->title);
@@ -1427,11 +1431,7 @@ static void navigate_view(App *app, guint view, guint page) {
     if (view == VIEW_SEARCH) { search_page(app, page); return; }
     if (view == VIEW_CATEGORIES) { render_categories(app); return; }
     if (view == VIEW_FAVORITES) { render_books(app, app->favorites->books); return; }
-    if (view == VIEW_SUBCATEGORIES && app->subcategories && page > 1) { render_subcategories(app); return; }
-    if (view == VIEW_SUBCATEGORIES && app->subcategories && page == 1) {
-        g_ptr_array_free(app->subcategories, TRUE);
-        app->subcategories = NULL;
-    }
+    if (view == VIEW_SUBCATEGORIES && app->subcategories) { render_subcategories(app); return; }
     clear_results(app);
     render_empty_state(app, view == VIEW_SUBCATEGORIES ? "Загружаем подкатегории…" : "Загружаем книги…");
     update_pager(app);
@@ -1757,6 +1757,10 @@ static gboolean async_task_complete(gpointer userdata) {
                     } else show_error(app, "Код принят, но подключение не сохранено", save_error);
                     g_clear_error(&save_error);
                     break;
+                }
+                if (app->subcategories) {
+                    g_ptr_array_free(app->subcategories, TRUE);
+                    app->subcategories = NULL;
                 }
                 if (app->page_window == task->settings_page) {
                     SettingsPage *page = g_object_get_data(G_OBJECT(task->settings_page), "bookrelay-settings-page");

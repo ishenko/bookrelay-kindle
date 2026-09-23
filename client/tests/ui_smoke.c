@@ -382,6 +382,13 @@ int main(int argc, char **argv) {
     if (!button) g_error("subcategory grid has no cards");
     expect_inside_window(&app, button, "subcategory card");
     snapshot(&app, argv[1], "subcategories.png");
+    {
+        GPtrArray *cached = app.subcategories;
+        app.category_id = g_strdup("/opds/genres/cached");
+        navigate_view(&app, VIEW_SUBCATEGORIES, 1);
+        if (app.subcategories != cached || !find_data_button(app.results, "subcategory-row"))
+            g_error("returning to a category discarded its cached subcategories");
+    }
 
     search_icon_clicked(NULL, &app);
     drain_events();

@@ -224,7 +224,7 @@ class FlibustaParserTests(unittest.TestCase):
                     raise AssertionError('read the rest of a huge OPDS feed')
                 entries = b''.join(
                     ('<entry><title>Book %d</title><link rel="http://opds-spec.org/acquisition/open-access" href="/b/%d/epub" /></entry>' % (i, i)).encode()
-                    for i in range(13)
+                    for i in range(26)
                 )
                 return b'<feed xmlns="http://www.w3.org/2005/Atom">' + entries
 
@@ -234,6 +234,86 @@ class FlibustaParserTests(unittest.TestCase):
         self.assertEqual([book.id for book in books], [str(i) for i in range(12)])
         self.assertTrue(more)
         self.assertEqual(response.reads, 1)
+
+    def test_streamed_books_reuse_bounded_prefix_for_previous_page(self):
+        class Response:
+            def __init__(self):
+                self.reads = 0
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read1(self, limit):
+                self.reads += 1
+                if self.reads > 1:
+                    raise AssertionError('a cached page should not require the end of the feed')
+                entries = b''.join(
+                    (b'<entry><title>Book %d</title><link rel="http://opds-spec.org/acquisition/open-access" href="/b/%d/epub" /></entry>' % (i, i))
+                    for i in range(26)
+                )
+                return b'<feed xmlns="http://www.w3.org/2005/Atom">' + entries
+
+        category, subcategory = '/opds/genres/Business', '/opds/genres/Business/141'
+        source = FlibustaSource()
+        with patch('bookrelay.source.flibusta.urlopen', side_effect=lambda *args, **kwargs: Response()) as fetch:
+            first, more = source.catalog_books(category, subcategory, 1, 12)
+            second, more_second = source.catalog_books(category, subcategory, 2, 12)
+            again, more_again = source.catalog_books(category, subcategory, 1, 12)
+        self.assertEqual([book.id for book in first], [str(i) for i in range(12)])
+        self.assertEqual([book.id for book in second], [str(i) for i in range(12, 24)])
+        self.assertEqual([book.id for book in again], [book.id for book in first])
+        self.assertTrue(more and more_second and more_again)
+        self.assertEqual(fetch.call_count, 1)
+
+    def test_sequential_pages_fetch_each_opds_feed_only_once(self):
+        class Response:
+            def __init__(self, path):
+                self.path = path
+                self.reads = 0
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read1(self, limit):
+                self.reads += 1
+                if self.reads > 1:
+                    return b''
+                prefix = '/opds/genres/Business/141'
+                index = int(self.path[len(prefix) + 1:]) if self.path.startswith(prefix + '/') else 0
+                next_link = f'<link rel="next" href="/opds/genres/Business/141/{index + 1}" />'
+                entries = ''.join(
+                    f'<entry><title>Book {i}</title><link rel="http://opds-spec.org/acquisition/open-access" href="/b/{i}/epub" /></entry>'
+                    for i in range(index * 20, (index + 1) * 20)
+                )
+                return f'<feed xmlns="http://www.w3.org/2005/Atom">{next_link}{entries}</feed>'.encode()
+
+        def response(request, timeout):
+            from urllib.parse import urlsplit
+            return Response(urlsplit(request.full_url).path)
+
+        source = FlibustaSource()
+        category, subcategory = '/opds/genres/Business', '/opds/genres/Business/141'
+        with patch('bookrelay.source.flibusta.urlopen', side_effect=response) as fetch:
+            for page in range(1, 11):
+                books, has_next = source.catalog_books(category, subcategory, page, 12)
+                self.assertEqual([book.id for book in books], [str(i) for i in range((page - 1) * 12, page * 12)])
+                self.assertTrue(has_next)
+        self.assertEqual(fetch.call_count, 7)
+
+    def test_streamed_book_cache_stays_bounded(self):
+        source = FlibustaSource()
+        with patch.object(source, '_stream_book_feed', return_value=([], None, True)) as fetch:
+            for i in range(20):
+                source._book_feed(f'/opds/genres/A/{i}', 13, cache=True)
+            source._book_feed('/opds/genres/A/19', 13, cache=True)
+        self.assertEqual(len(source._book_cache), 16)
+        self.assertEqual(fetch.call_count, 20)
 
     def test_catalog_next_page_reuses_previous_opds_feed(self):
         class StubSource(FlibustaSource):

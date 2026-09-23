@@ -110,6 +110,10 @@ class FlibustaSource:
         self._feed_cache: OrderedDict[str, tuple[float, bytes]] = OrderedDict()
         self._feed_cache_bytes = 0
         self._feed_cache_lock = Lock()
+        # Streaming stops as soon as a page is ready. Retain a small prefix so
+        # returning to a page does not download the same large OPDS feed again.
+        self._book_cache: OrderedDict[str, tuple[float, list[Book], str | None, bool]] = OrderedDict()
+        self._book_cache_lock = Lock()
 
     def _get(self, path: str) -> bytes:
         request = Request(urljoin(self.base_url + "/", path.lstrip("/")), headers={"User-Agent": "BookRelay/0.1"})
@@ -170,20 +174,39 @@ class FlibustaSource:
             next_link = next((link.get("href") for link in root.findall(f"{ATOM}link") if link.get("rel") == "next"), None)
             return parse_opds_feed(payload, self.base_url)[1], next_link
 
+        if cache:
+            with self._book_cache_lock:
+                cached = self._book_cache.get(path)
+                if cached and monotonic() - cached[0] < 300 and (len(cached[1]) >= needed or cached[3]):
+                    self._book_cache.move_to_end(path)
+                    return cached[1][:needed], cached[2] if cached[3] else None
         for attempt in range(2):
             try:
-                return self._stream_book_feed(path, needed)
+                # OPDS normally has 20 books per feed. Reading one extra entry
+                # lets us reach EOF and remember the next feed for later pages,
+                # while a larger feed still stops after a small prefix.
+                books, next_link, complete = self._stream_book_feed(path, max(needed, 21) if cache else needed)
+                if cache and len(books) <= 240:
+                    with self._book_cache_lock:
+                        previous = self._book_cache.get(path)
+                        if not previous or monotonic() - previous[0] >= 300 or len(books) >= len(previous[1]):
+                            self._book_cache[path] = (monotonic(), books, next_link, complete)
+                        self._book_cache.move_to_end(path)
+                        while len(self._book_cache) > 16:
+                            self._book_cache.popitem(last=False)
+                return books, next_link
             except (HTTPError, URLError, OSError, TimeoutError, http.client.HTTPException) as exc:
                 if attempt or not retryable_source_error(exc):
                     raise SourceUnavailable("Flibusta did not respond; please retry") from exc
 
-    def _stream_book_feed(self, path: str, needed: int) -> tuple[list[Book], str | None]:
+    def _stream_book_feed(self, path: str, needed: int) -> tuple[list[Book], str | None, bool]:
         request = Request(urljoin(self.base_url + "/", path.lstrip("/")), headers={"User-Agent": "BookRelay/0.1"})
         parser = ET.XMLPullParser(events=("start", "end"))
         root = None
         next_link = None
         books: list[Book] = []
         received = 0
+        complete = False
         try:
             with urlopen(request, timeout=self.timeout) as response:
                 while len(books) < needed:
@@ -191,6 +214,7 @@ class FlibustaSource:
                     chunk = response.read1(8192)
                     if not chunk:
                         parser.close()
+                        complete = True
                         break
                     received += len(chunk)
                     if received > 25 * 1024 * 1024:
@@ -215,7 +239,7 @@ class FlibustaSource:
             raise SourceUnavailable("Flibusta returned an invalid catalog") from exc
         if root is None:
             raise SourceUnavailable("Flibusta returned an invalid catalog")
-        return books, next_link
+        return books, next_link, complete
 
     def _paged_books(self, path: str, page: int, size: int = 6, cache: bool = False) -> tuple[list[Book], bool]:
         start = (page - 1) * size

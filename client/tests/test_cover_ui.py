@@ -36,14 +36,16 @@ def main(binary: str, output: str) -> None:
                 self.send_error(404)
             else:
                 time.sleep(0.08)
+                # Measure the slow upstream phase. Once it finishes, the
+                # client can release its worker before this handler returns.
+                with lock:
+                    if stress_request:
+                        active -= 1
                 self.send_response(200)
                 self.send_header("Content-Type", "image/jpeg")
                 self.send_header("Content-Length", str(len(jpeg)))
                 self.end_headers()
                 self.wfile.write(jpeg)
-            with lock:
-                if stress_request:
-                    active -= 1
 
         def log_message(self, *_args):
             pass

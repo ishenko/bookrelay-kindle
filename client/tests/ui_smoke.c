@@ -143,6 +143,9 @@ int main(int argc, char **argv) {
     app.config = g_new0(BookRelayConfig, 1);
     app.config->relay_url = g_strdup("");
     app.config_path = g_build_filename(argv[1], "unused-config.ini", NULL);
+    app.favorites = bookrelay_favorites_load(app.config_path, app.config->relay_url);
+    g_remove(app.favorites->path);
+    reload_favorites(&app);
     g_mkdir_with_parents(argv[1], 0700);
     build_ui(&app);
     drain_events();
@@ -168,6 +171,7 @@ int main(int argc, char **argv) {
         bookrelay_config_free(saved);
         gtk_widget_destroy(app.window);
         bookrelay_config_free(app.config);
+        bookrelay_favorites_free(app.favorites);
         g_free(app.config_path);
         curl_global_cleanup();
         return 0;
@@ -198,6 +202,7 @@ int main(int argc, char **argv) {
             g_error("code Enter did not invoke connection validation");
         gtk_widget_destroy(app.window);
         bookrelay_config_free(app.config);
+        bookrelay_favorites_free(app.favorites);
         g_free(app.config_path);
         curl_global_cleanup();
         return 0;
@@ -320,6 +325,7 @@ int main(int argc, char **argv) {
         gint64 deadline = g_get_monotonic_time() + 10 * G_USEC_PER_SEC;
         g_free(app.config->relay_url);
         app.config->relay_url = g_strdup(g_getenv("BOOKRELAY_TEST_COVER_RELAY"));
+        reload_favorites(&app);
         g_free(book->id);
         book->id = g_strdup("451198");
         book->cover_url = g_strdup("/v1/books/451198/cover?path=%2Fi%2F98%2F451198%2Fcover.jpg");
@@ -347,12 +353,91 @@ int main(int argc, char **argv) {
     if (!button) g_error("details page has no send button");
     expect_inside_window(&app, button, "send book button");
     snapshot(&app, argv[1], "book-details.png");
+    if (bookrelay_favorites_contains(app.favorites, details->book->id))
+        g_error("new book was already a favorite");
+    gtk_button_clicked(GTK_BUTTON(details->favorite_button));
+    if (!bookrelay_favorites_contains(app.favorites, details->book->id))
+        g_error("star did not add book to favorites");
+    snapshot(&app, argv[1], "book-details-favorite.png");
+    {
+        BookRelayFavorites *reloaded = bookrelay_favorites_load(app.config_path, app.config->relay_url);
+        BookRelayFavorites unwritable = {0};
+        GError *error = NULL;
+        unwritable.path = g_strdup("/dev/null/favorites.ini");
+        unwritable.books = g_ptr_array_new_with_free_func((GDestroyNotify)bookrelay_book_free);
+        if (reloaded->books->len != 1 || !bookrelay_favorites_contains(reloaded, details->book->id))
+            g_error("favorite did not survive reload");
+        if (bookrelay_favorites_set(&unwritable, details->book, TRUE, &error) || !error || unwritable.books->len)
+            g_error("failed write changed favorite state");
+        g_clear_error(&error);
+        g_ptr_array_free(unwritable.books, TRUE);
+        g_free(unwritable.path);
+        bookrelay_favorites_free(reloaded);
+    }
     gtk_widget_destroy(details->window);
     drain_events();
+    {
+        GdkEventButton event = {0};
+        event.button = 1;
+        favorites_icon_pressed(NULL, &event, &app);
+    }
+    drain_events();
+    if (g_strcmp0(gtk_label_get_text(GTK_LABEL(app.section_title)), "Избранное") != 0)
+        g_error("favorites view title is missing");
+    button = find_data_button(app.results, "book-row");
+    if (!button) g_error("favorite book card is missing");
+    expect_inside_window(&app, button, "favorite card");
+    snapshot(&app, argv[1], "favorites.png");
+    {
+        guint i;
+        for (i = 0; i < 12; i++) {
+            BookRelayBook extra = {0};
+            GError *error = NULL;
+            extra.id = g_strdup_printf("extra-%u", i);
+            extra.title = g_strdup_printf("Избранная книга %u", i);
+            extra.author = g_strdup("Автор");
+            if (!bookrelay_favorites_set(app.favorites, &extra, TRUE, &error))
+                g_error("add test favorite: %s", error->message);
+            g_free(extra.id); g_free(extra.title); g_free(extra.author);
+        }
+        navigate_view(&app, VIEW_FAVORITES, 2);
+        drain_events();
+        if (g_strcmp0(gtk_label_get_text(GTK_LABEL(app.page_label)), "Страница 2 из 2") != 0 ||
+            !find_data_button(app.results, "book-row"))
+            g_error("favorite pagination failed");
+        snapshot(&app, argv[1], "favorites-page-2.png");
+        button = find_data_button(app.results, "book-row");
+        gtk_button_clicked(GTK_BUTTON(button));
+        details = g_object_get_data(G_OBJECT(app.page_window), "bookrelay-details-page");
+        gtk_button_clicked(GTK_BUTTON(details->favorite_button));
+        if (app.page != 1 || g_strcmp0(gtk_label_get_text(GTK_LABEL(app.page_label)), "Страница 1 из 1") != 0)
+            g_error("removing the last card on page two did not return to page one");
+        gtk_widget_destroy(details->window);
+        drain_events();
+        for (i = 0; i < 11; i++) {
+            BookRelayBook extra = {0};
+            gchar *id = g_strdup_printf("extra-%u", i);
+            extra.id = id;
+            if (!bookrelay_favorites_set(app.favorites, &extra, FALSE, NULL))
+                g_error("remove test favorite failed");
+            g_free(id);
+        }
+    }
+    navigate_view(&app, VIEW_FAVORITES, 1);
+    button = find_data_button(app.results, "book-row");
+    gtk_button_clicked(GTK_BUTTON(button));
+    details = g_object_get_data(G_OBJECT(app.page_window), "bookrelay-details-page");
+    gtk_button_clicked(GTK_BUTTON(details->favorite_button));
+    if (app.favorites->books->len || find_data_button(app.results, "book-row") || app.page != 1)
+        g_error("removing the last favorite did not refresh the empty page");
+    gtk_widget_destroy(details->window);
+    drain_events();
+    snapshot(&app, argv[1], "favorites-empty.png");
     g_ptr_array_free(books, TRUE);
 
     gtk_widget_destroy(app.window);
     bookrelay_config_free(app.config);
+    bookrelay_favorites_free(app.favorites);
     g_ptr_array_free(app.catalog_categories, TRUE);
     g_ptr_array_free(app.subcategories, TRUE);
     g_free(app.config_path);

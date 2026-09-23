@@ -18,7 +18,7 @@ The client is packaged as a KPM-style user-storage application. It does not modi
 2. Add the relay SMTP sender to Amazon's Approved Personal Document E-mail List.
 3. Open the relay pairing page on a computer, enter the Kindle Email for the device and the owner key, and copy the one-time code.
 4. On the Kindle, enter the server hostname (without https://), Kindle Email, and one-time code on the same screen, then press Connect or Enter. The client updates the delivery email on the relay after claiming the code.
-5. Search books on Kindle and choose Send to Kindle.
+5. Search books on Kindle and choose Send to Kindle. Tap the star on a book page to save it locally; the star in the top bar opens favorites.
 
 The relay stores only job metadata and temporary delivery data needed to send the EPUB. It does not bypass DRM, CAPTCHA, or source authentication.
 
@@ -58,7 +58,7 @@ After a new GitHub Release, update the installed package with:
 
 To prepare the package offline, copy the whole bookrelay-kpm folder from the
 release files to the Kindle USB root. It must contain manifest.json and
-packages/bookrelay-kindle_0.1.12_kindlehf.kpkg. Then run:
+packages/bookrelay-kindle_0.1.13_kindlehf.kpkg. Then run:
 
     kpm add-repo file:///mnt/us/bookrelay-kpm/manifest.json
     kpm update

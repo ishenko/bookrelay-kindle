@@ -94,7 +94,7 @@ class KindleUiContractTests(unittest.TestCase):
         self.assertIn('header_icon("settings.png"', source)
         self.assertIn('header_icon("home.png"', source)
         self.assertIn('share/icons/{icon.name}', packager)
-        for icon in ("home", "search", "settings", "help", "close", "first", "previous", "next", "last"):
+        for icon in ("home", "search", "star", "star-filled", "settings", "help", "close", "first", "previous", "next", "last"):
             self.assertTrue(root.joinpath("client", "share", "icons", f"{icon}.png").is_file())
 
     def test_native_windows_use_kindle_window_manager_titles(self):

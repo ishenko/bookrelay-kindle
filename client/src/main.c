@@ -1,5 +1,6 @@
 #include "api.h"
 #include "config.h"
+#include "favorites.h"
 
 #include <gtk/gtk.h>
 #include <gdk-pixbuf/gdk-pixbuf.h>
@@ -16,6 +17,7 @@
 typedef struct {
     BookRelayConfig *config;
     gchar *config_path;
+    BookRelayFavorites *favorites;
     GtkWidget *window;
     GtkWidget *pages;
     GtkWidget *page_window;
@@ -51,7 +53,7 @@ typedef struct {
     gchar *subcategory_title;
 } App;
 
-enum { VIEW_CATEGORIES, VIEW_SUBCATEGORIES, VIEW_BOOKS, VIEW_SEARCH };
+enum { VIEW_CATEGORIES, VIEW_SUBCATEGORIES, VIEW_BOOKS, VIEW_SEARCH, VIEW_FAVORITES };
 typedef struct { App *app; gchar *id; gchar *title; } CategoryRow;
 
 typedef struct {
@@ -82,6 +84,8 @@ typedef struct {
     App *app;
     GtkWidget *window;
     BookRelayBook *book;
+    GtkWidget *favorite_button;
+    GtkWidget *favorite_image;
 } DetailsPage;
 
 typedef struct { App *app; BookRelayBook *book; } BookRow;
@@ -141,6 +145,14 @@ static void make_touch_target(GtkWidget *widget, gint width, gint height);
 static void set_large_font(GtkWidget *widget, const gchar *description);
 static void settings_clicked(GtkButton *button, gpointer userdata);
 static void exit_clicked(GtkButton *button, gpointer userdata);
+static GtkWidget *ink_icon_image(const gchar *filename);
+static void set_icon_image(GtkWidget *image, const gchar *filename);
+static void render_books(App *app, GPtrArray *books);
+
+static void reload_favorites(App *app) {
+    bookrelay_favorites_free(app->favorites);
+    app->favorites = bookrelay_favorites_load(app->config_path, app->config->relay_url);
+}
 
 static gboolean kindle_keyboard_property(const gchar *property, const gchar *value) {
     const gchar *path = g_getenv("BOOKRELAY_LIPC_SET_PROP");
@@ -786,12 +798,13 @@ static gchar *list_excerpt(const gchar *text, guint max_chars);
 
 static GtkWidget *book_placeholder(BookRelayBook *book, gint width, gint height) {
     GtkWidget *background = gtk_event_box_new();
-    GtkWidget *content = gtk_vbox_new(FALSE, width < 150 ? 5 : 8);
+    gboolean compact = width < 190;
+    GtkWidget *content = gtk_vbox_new(FALSE, compact ? 5 : 8);
     GtkWidget *title;
     GtkWidget *author;
     GtkWidget *year;
-    gchar *title_text = list_excerpt(book->title && *book->title ? book->title : "Без названия", width < 150 ? 28 : 52);
-    gchar *author_text = list_excerpt(book->author && *book->author ? book->author : "Автор не указан", width < 150 ? 17 : 28);
+    gchar *title_text = list_excerpt(book->title && *book->title ? book->title : "Без названия", compact ? 24 : 52);
+    gchar *author_text = list_excerpt(book->author && *book->author ? book->author : "Автор не указан", compact ? 16 : 28);
     gchar *year_text = book->year ? g_strdup_printf("%d", book->year) : g_strdup("Год не указан");
     title = gtk_label_new(title_text);
     author = gtk_label_new(author_text);
@@ -800,19 +813,19 @@ static GtkWidget *book_placeholder(BookRelayBook *book, gint width, gint height)
     gtk_event_box_set_visible_window(GTK_EVENT_BOX(background), TRUE);
     ink_background(background, "#efefec");
     gtk_widget_set_size_request(background, width, height);
-    gtk_container_set_border_width(GTK_CONTAINER(content), width < 150 ? 6 : 15);
+    gtk_container_set_border_width(GTK_CONTAINER(content), compact ? 6 : 15);
     gtk_label_set_line_wrap(GTK_LABEL(title), TRUE);
     gtk_label_set_line_wrap_mode(GTK_LABEL(title), PANGO_WRAP_WORD_CHAR);
     gtk_label_set_line_wrap(GTK_LABEL(author), TRUE);
     gtk_label_set_line_wrap_mode(GTK_LABEL(author), PANGO_WRAP_WORD_CHAR);
-    gtk_widget_set_size_request(title, width - (width < 150 ? 12 : 30), -1);
-    gtk_widget_set_size_request(author, width - (width < 150 ? 12 : 30), -1);
+    gtk_widget_set_size_request(title, width - (compact ? 12 : 30), -1);
+    gtk_widget_set_size_request(author, width - (compact ? 12 : 30), -1);
     gtk_misc_set_alignment(GTK_MISC(title), 0, 0);
     gtk_misc_set_alignment(GTK_MISC(author), 0, 1);
     gtk_misc_set_alignment(GTK_MISC(year), 0, 1);
-    set_large_font(title, width < 150 ? "Sans Bold 10" : "Sans Bold 16");
-    set_large_font(author, width < 150 ? "Sans 9" : "Sans 12");
-    set_large_font(year, width < 150 ? "Sans 9" : "Sans 12");
+    set_large_font(title, width < 150 ? "Sans Bold 10" : compact ? "Sans Bold 13" : "Sans Bold 16");
+    set_large_font(author, compact ? "Sans 9" : "Sans 12");
+    set_large_font(year, compact ? "Sans 9" : "Sans 12");
     gtk_box_pack_start(GTK_BOX(content), title, FALSE, FALSE, 0);
     gtk_box_pack_end(GTK_BOX(content), year, FALSE, FALSE, 0);
     gtk_box_pack_end(GTK_BOX(content), author, FALSE, FALSE, 0);
@@ -955,6 +968,7 @@ static void update_pager(App *app) {
     gchar *text;
     if (app->view == VIEW_CATEGORIES) count = app->catalog_categories ? app->catalog_categories->len : 0;
     if (app->view == VIEW_SUBCATEGORIES) count = app->subcategories ? app->subcategories->len : 0;
+    if (app->view == VIEW_FAVORITES) count = app->favorites ? app->favorites->books->len : 0;
     total = MAX(1, (count + items_per_page(app) - 1) / items_per_page(app));
     if (app->view == VIEW_BOOKS || app->view == VIEW_SEARCH) {
         text = app->has_next ? g_strdup_printf("Страница %u из ≥%u", app->page, app->page + 1)
@@ -966,7 +980,7 @@ static void update_pager(App *app) {
     gtk_widget_set_sensitive(app->first_page, app->page > 1);
     gtk_widget_set_sensitive(app->previous_page, app->page > 1);
     gtk_widget_set_sensitive(app->next_page, (app->view == VIEW_BOOKS || app->view == VIEW_SEARCH) ? app->has_next : app->page < total);
-    gtk_widget_set_sensitive(app->last_page, (app->view == VIEW_CATEGORIES || app->view == VIEW_SUBCATEGORIES) && app->page < total);
+    gtk_widget_set_sensitive(app->last_page, (app->view == VIEW_CATEGORIES || app->view == VIEW_SUBCATEGORIES || app->view == VIEW_FAVORITES) && app->page < total);
     g_free(text);
 }
 
@@ -1097,18 +1111,18 @@ static void render_subcategories(App *app) {
 }
 
 static void render_books(App *app, GPtrArray *books) {
-    guint i;
+    guint i, start = app->view == VIEW_FAVORITES ? (app->page - 1) * items_per_page(app) : 0;
     gint cover_width = grid_cover_width(TRUE);
     GtkWidget *grid = gtk_table_new(3, 4, TRUE);
     gtk_table_set_row_spacings(GTK_TABLE(grid), cover_width < 150 ? 8 : 24);
     gtk_table_set_col_spacings(GTK_TABLE(grid), cover_width < 150 ? 8 : 16);
     clear_results(app);
     if (!books || books->len == 0) {
-        render_empty_state(app, "Ничего не найдено");
+        render_empty_state(app, app->view == VIEW_FAVORITES ? "В избранном пока нет книг" : "Ничего не найдено");
         update_pager(app);
         return;
     }
-    for (i = 0; i < books->len; i++) {
+    for (i = start; i < books->len && i < start + items_per_page(app); i++) {
         BookRelayBook *book = g_ptr_array_index(books, i);
         GtkWidget *button = gtk_button_new();
         GtkWidget *cover_align = gtk_alignment_new(0.5, 0, 0, 0);
@@ -1121,8 +1135,8 @@ static void render_books(App *app, GPtrArray *books) {
         gtk_container_add(GTK_CONTAINER(cover_align), make_cover(app, book, cover_width));
         gtk_button_set_relief(GTK_BUTTON(button), GTK_RELIEF_NONE);
         gtk_container_add(GTK_CONTAINER(button), cover_align);
-        gtk_table_attach_defaults(GTK_TABLE(grid), button, i % 4, i % 4 + 1,
-                                  i / 4, i / 4 + 1);
+        gtk_table_attach_defaults(GTK_TABLE(grid), button, (i - start) % 4, (i - start) % 4 + 1,
+                                  (i - start) / 4, (i - start) / 4 + 1);
     }
     gtk_box_pack_start(GTK_BOX(app->results), grid, FALSE, FALSE, 0);
     gtk_widget_show_all(app->results);
@@ -1153,6 +1167,27 @@ static void details_page_send(GtkButton *button, gpointer userdata) {
     gtk_widget_destroy(page->window);
 }
 
+static void details_page_favorite(GtkButton *button, gpointer userdata) {
+    DetailsPage *page = userdata;
+    App *app = page->app;
+    gboolean selected = !bookrelay_favorites_contains(app->favorites, page->book->id);
+    GError *error = NULL;
+    if (!bookrelay_favorites_set(app->favorites, page->book, selected, &error)) {
+        show_error(app, "Не удалось сохранить избранное", error);
+        g_clear_error(&error);
+        return;
+    }
+    set_icon_image(page->favorite_image, selected ? "star-filled.png" : "star.png");
+    gtk_widget_set_tooltip_text(page->favorite_button,
+                                selected ? "Убрать из избранного" : "Добавить в избранное");
+    set_status(app, selected ? "Книга добавлена в избранное" : "Книга удалена из избранного");
+    if (app->view == VIEW_FAVORITES) {
+        guint total = MAX(1, (app->favorites->books->len + items_per_page(app) - 1) / items_per_page(app));
+        app->page = MIN(app->page, total);
+        render_books(app, app->favorites->books);
+    }
+}
+
 static void details_page_free(DetailsPage *page) {
     if (!page) return;
     bookrelay_book_free(page->book);
@@ -1168,6 +1203,8 @@ static void show_details(GtkButton *button, gpointer userdata) {
     GtkWidget *label;
     GtkWidget *close_button;
     GtkWidget *send_button;
+    GtkWidget *favorite_button;
+    GtkWidget *send_group;
     DetailsPage *page;
     gchar *text;
 
@@ -1196,11 +1233,25 @@ static void show_details(GtkButton *button, gpointer userdata) {
 
     close_button = page_button("Назад");
     send_button = page_button("Скачать на Kindle");
+    favorite_button = gtk_button_new();
+    page->favorite_button = favorite_button;
+    page->favorite_image = ink_icon_image(bookrelay_favorites_contains(row->app->favorites, page->book->id)
+                                         ? "star-filled.png" : "star.png");
+    gtk_container_add(GTK_CONTAINER(favorite_button), page->favorite_image);
+    gtk_widget_set_tooltip_text(favorite_button,
+        bookrelay_favorites_contains(row->app->favorites, page->book->id)
+        ? "Убрать из избранного" : "Добавить в избранное");
+    make_touch_target(favorite_button, 76, 68);
+    gtk_button_set_relief(GTK_BUTTON(favorite_button), GTK_RELIEF_NONE);
+    send_group = gtk_hbox_new(FALSE, 8);
     g_signal_connect(close_button, "clicked", G_CALLBACK(details_page_close), page);
     g_signal_connect(send_button, "clicked", G_CALLBACK(details_page_send), page);
+    g_signal_connect(favorite_button, "clicked", G_CALLBACK(details_page_favorite), page);
     ink_primary_button(send_button);
     gtk_box_pack_start(GTK_BOX(actions), close_button, TRUE, TRUE, 0);
-    gtk_box_pack_start(GTK_BOX(actions), send_button, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(send_group), send_button, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(send_group), favorite_button, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(actions), send_group, TRUE, TRUE, 0);
     gtk_widget_show_all(window);
     g_free(text);
 }
@@ -1258,12 +1309,17 @@ static void first_page_clicked(GtkButton *button, gpointer userdata) {
 static void last_page_clicked(GtkButton *button, gpointer userdata) {
     App *app = userdata;
     guint count = app->view == VIEW_CATEGORIES ? app->catalog_categories->len :
-                  app->view == VIEW_SUBCATEGORIES && app->subcategories ? app->subcategories->len : 0;
+                  app->view == VIEW_SUBCATEGORIES && app->subcategories ? app->subcategories->len :
+                  app->view == VIEW_FAVORITES && app->favorites ? app->favorites->books->len : 0;
     if (count) navigate_view(app, app->view, MAX(1, (count + items_per_page(app) - 1) / items_per_page(app)));
 }
 
 static void home_clicked(GtkButton *button, gpointer userdata) {
     navigate_view((App *)userdata, VIEW_CATEGORIES, 1);
+}
+
+static void favorites_clicked(GtkButton *button, gpointer userdata) {
+    navigate_view((App *)userdata, VIEW_FAVORITES, 1);
 }
 
 static void breadcrumb_category_clicked(GtkButton *button, gpointer userdata) {
@@ -1308,8 +1364,10 @@ static void navigate_view(App *app, guint view, guint page) {
     if (view == VIEW_CATEGORIES) gtk_label_set_text(GTK_LABEL(app->section_title), "Категории");
     else if (view == VIEW_SUBCATEGORIES) gtk_label_set_text(GTK_LABEL(app->section_title), app->category_title);
     else if (view == VIEW_BOOKS) gtk_label_set_text(GTK_LABEL(app->section_title), app->subcategory_title);
+    else if (view == VIEW_FAVORITES) gtk_label_set_text(GTK_LABEL(app->section_title), "Избранное");
     if (view == VIEW_SEARCH) { search_page(app, page); return; }
     if (view == VIEW_CATEGORIES) { render_categories(app); return; }
+    if (view == VIEW_FAVORITES) { render_books(app, app->favorites->books); return; }
     if (view == VIEW_SUBCATEGORIES && app->subcategories && page > 1) { render_subcategories(app); return; }
     if (view == VIEW_SUBCATEGORIES && app->subcategories && page == 1) {
         g_ptr_array_free(app->subcategories, TRUE);
@@ -1619,6 +1677,7 @@ static gboolean async_task_complete(gpointer userdata) {
                 GError *save_error = NULL;
                 g_free(app->config->relay_url);
                 app->config->relay_url = g_strdup(task->base_url);
+                reload_favorites(app);
                 g_free(app->config->token);
                 app->config->token = g_strdup(task->claim->token);
                 g_free(app->config->kindle_email);
@@ -1667,6 +1726,7 @@ static gboolean async_task_complete(gpointer userdata) {
             } else {
                 g_free(app->config->relay_url);
                 app->config->relay_url = g_strdup(task->base_url);
+                reload_favorites(app);
                 g_free(app->config->kindle_email);
                 app->config->kindle_email = g_strdup(task->state);
                 if (!bookrelay_config_save(app->config, app->config_path, &task->error)) {
@@ -1765,7 +1825,7 @@ static void help_clicked(GtkButton *button, gpointer userdata) {
     GtkWidget *body, *actions, *page, *label, *close_button;
     page = new_kindle_page(app, "Как пользоваться", &body, &actions);
     if (!page) return;
-    label = gtk_label_new("1. Подключите relay в настройках: укажите адрес сервера и одноразовый код.\n\n2. Выберите категорию и подкатегорию или найдите книгу через поиск.\n\n3. Нажмите на обложку книги и выберите «Скачать на Kindle». EPUB будет отправлен на адрес вашего Kindle.\n\nИконка домика возвращает на главную. Путь над заголовком помогает перейти к категории. Стрелки внизу перелистывают страницы.");
+    label = gtk_label_new("1. Подключите relay в настройках: укажите адрес сервера и одноразовый код.\n\n2. Выберите категорию и подкатегорию или найдите книгу через поиск.\n\n3. Нажмите на обложку книги и выберите «Скачать на Kindle». EPUB будет отправлен на адрес вашего Kindle.\n\nЗвезда на странице книги добавляет её в избранное или убирает оттуда. Звезда в верхней панели открывает избранное. Иконка домика возвращает на главную. Стрелки внизу перелистывают страницы.");
     set_large_font(label, "Sans 22");
     gtk_label_set_line_wrap(GTK_LABEL(label), TRUE);
     gtk_misc_set_alignment(GTK_MISC(label), 0, 0);
@@ -1782,6 +1842,13 @@ static GtkWidget *ink_icon_image(const gchar *filename) {
     GtkWidget *icon = gtk_image_new_from_file(path);
     g_free(path);
     return icon;
+}
+
+static void set_icon_image(GtkWidget *image, const gchar *filename) {
+    const gchar *asset_dir = g_getenv("BOOKRELAY_ASSET_DIR");
+    gchar *path = g_build_filename(asset_dir && *asset_dir ? asset_dir : "client/share/covers", "..", "icons", filename, NULL);
+    gtk_image_set_from_file(GTK_IMAGE(image), path);
+    g_free(path);
 }
 
 static GtkWidget *header_icon(const gchar *filename, const gchar *tooltip) {
@@ -1803,6 +1870,11 @@ static gboolean home_icon_pressed(GtkWidget *widget, GdkEventButton *event, gpoi
 
 static gboolean search_icon_pressed(GtkWidget *widget, GdkEventButton *event, gpointer userdata) {
     if (event->button == 1) search_icon_clicked(NULL, userdata);
+    return TRUE;
+}
+
+static gboolean favorites_icon_pressed(GtkWidget *widget, GdkEventButton *event, gpointer userdata) {
+    if (event->button == 1 && ((App *)userdata)->catalog_ready) favorites_clicked(NULL, userdata);
     return TRUE;
 }
 
@@ -1836,6 +1908,7 @@ static void build_ui(App *app) {
     GtkWidget *breadcrumb_separator = gtk_label_new("›");
     GtkWidget *breadcrumb_current = gtk_label_new("");
     GtkWidget *search_icon = header_icon("search.png", "Поиск книг");
+    GtkWidget *favorites_icon = header_icon("star.png", "Избранное");
     GtkWidget *settings_icon = header_icon("settings.png", "Настройки и подключение");
     GtkWidget *help_icon = header_icon("help.png", "Справка");
     GtkWidget *exit_icon = header_icon("close.png", "Выход");
@@ -1922,6 +1995,7 @@ static void build_ui(App *app) {
     gtk_box_pack_end(GTK_BOX(header), exit_icon, FALSE, FALSE, 0);
     gtk_box_pack_end(GTK_BOX(header), help_icon, FALSE, FALSE, 0);
     gtk_box_pack_end(GTK_BOX(header), settings_icon, FALSE, FALSE, 0);
+    gtk_box_pack_end(GTK_BOX(header), favorites_icon, FALSE, FALSE, 0);
     gtk_box_pack_end(GTK_BOX(header), search_icon, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(breadcrumbs), breadcrumb_home, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(breadcrumbs), breadcrumb_divider, FALSE, FALSE, 0);
@@ -1957,6 +2031,7 @@ static void build_ui(App *app) {
     gtk_notebook_append_page(GTK_NOTEBOOK(app->pages), root, NULL);
     gtk_container_add(GTK_CONTAINER(app->window), shell);
     g_signal_connect(search_icon, "button-press-event", G_CALLBACK(search_icon_pressed), app);
+    g_signal_connect(favorites_icon, "button-press-event", G_CALLBACK(favorites_icon_pressed), app);
     g_signal_connect(settings_icon, "button-press-event", G_CALLBACK(settings_icon_pressed), app);
     g_signal_connect(help_icon, "button-press-event", G_CALLBACK(help_icon_pressed), app);
     g_signal_connect(exit_icon, "button-press-event", G_CALLBACK(exit_icon_pressed), app);
@@ -1985,6 +2060,7 @@ int main(int argc, char **argv) {
     const gchar *home = g_get_user_data_dir();
     app.config_path = g_build_filename(home, "bookrelay", "config.ini", NULL);
     app.config = bookrelay_config_load(app.config_path);
+    app.favorites = bookrelay_favorites_load(app.config_path, app.config->relay_url);
 #if !GLIB_CHECK_VERSION(2, 32, 0)
     g_thread_init(NULL);
 #endif
@@ -1994,6 +2070,7 @@ int main(int argc, char **argv) {
     g_signal_connect(app.window, "destroy", G_CALLBACK(gtk_main_quit), NULL);
     gtk_main();
     bookrelay_config_free(app.config);
+    bookrelay_favorites_free(app.favorites);
     if (app.catalog_categories) g_ptr_array_free(app.catalog_categories, TRUE);
     if (app.subcategories) g_ptr_array_free(app.subcategories, TRUE);
     g_free(app.category_id); g_free(app.category_title);

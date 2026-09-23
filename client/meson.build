@@ -1,4 +1,4 @@
-project('bookrelay-kindle-client', 'c', version: '0.1.12', default_options: ['c_std=c11', 'warning_level=2'])
+project('bookrelay-kindle-client', 'c', version: '0.1.13', default_options: ['c_std=c11', 'warning_level=2'])
 gtk = dependency('gtk+-2.0')
 curl = dependency('libcurl')
 glib = dependency('glib-2.0')
@@ -8,4 +8,4 @@ if not gthread.found()
   gthread = cc.find_library('gthread-2.0', required: true)
 endif
 gdkpixbuf = dependency('gdk-pixbuf-2.0')
-executable('bookrelay-kindle', ['src/main.c', 'src/api.c', 'src/config.c'], dependencies: [gtk, curl, glib, gthread, gdkpixbuf], install: true)
+executable('bookrelay-kindle', ['src/main.c', 'src/api.c', 'src/config.c', 'src/favorites.c'], dependencies: [gtk, curl, glib, gthread, gdkpixbuf], install: true)

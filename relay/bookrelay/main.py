@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .delivery import SmtpMailer
 from .jobs import DeliveryService, JobStore
 from .pairing import PairingStore, utc_now
-from .source.flibusta import FlibustaSource
+from .source.flibusta import FlibustaSource, SourceUnavailable
 
 
 class PairStartRequest(BaseModel):
@@ -177,6 +177,10 @@ def create_app(db_path: Path | str | None = None, source=None, mailer=None, pair
     app.state.pairing = pairing
     app.state.source = source
     app.state.delivery = delivery
+
+    @app.exception_handler(SourceUnavailable)
+    async def source_unavailable(request: Request, exc: SourceUnavailable):
+        return JSONResponse(status_code=503, content={"detail": str(exc)})
     app.state.limiter = limiter
     app.state.default_kindle_email = default_email
 

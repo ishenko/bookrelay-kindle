@@ -11,7 +11,7 @@ from bookrelay.delivery import build_epub_email
 from bookrelay.main import create_app
 from bookrelay.models import Book
 from bookrelay.pairing import PairingStore
-from bookrelay.source.flibusta import FlibustaSource
+from bookrelay.source.flibusta import FlibustaSource, SourceUnavailable
 
 
 def make_epub():
@@ -54,6 +54,22 @@ class FakeMailer:
 
 
 class ApiTests(unittest.IsolatedAsyncioTestCase):
+    async def test_source_outage_returns_service_unavailable(self):
+        class OfflineSource(FakeSource):
+            def subcategories(self, category):
+                raise SourceUnavailable("Flibusta did not respond; please retry")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            app = create_app(Path(tmp) / "relay.sqlite3", source=OfflineSource(),
+                             mailer=FakeMailer(), pairing_admin_key="test-owner-key")
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+                start = await client.post("/v1/pair/start", json={"device_id": "pw12", "kindle_email": "reader@kindle.com", "admin_key": "test-owner-key"})
+                token = (await client.post("/v1/pair/claim", json={"code": start.json()["code"]})).json()["token"]
+                response = await client.get("/v1/subcategories", params={"category": "new"},
+                                            headers={"Authorization": f"Bearer {token}"})
+                self.assertEqual(response.status_code, 503)
+                self.assertIn("Flibusta did not respond", response.json()["detail"])
+
     async def test_catalog_cover_is_served_through_authenticated_relay(self):
         class CoverSource(FlibustaSource):
             def __init__(self):

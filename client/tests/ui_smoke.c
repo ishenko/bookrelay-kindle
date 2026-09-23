@@ -3,6 +3,7 @@
 #define main bookrelay_application_main
 #include "../src/main.c"
 #undef main
+#include <gdk/gdkkeysyms.h>
 
 static void drain_events(void) {
     while (gtk_events_pending()) gtk_main_iteration();
@@ -169,6 +170,28 @@ int main(int argc, char **argv) {
         if (g_strcmp0(saved->kindle_email, "reader@kindle.com") != 0)
             g_error("email was not saved after retry without a code");
         bookrelay_config_free(saved);
+        search_icon_clicked(NULL, &app);
+        drain_events();
+        if (gtk_window_get_focus(GTK_WINDOW(app.window)) != app.query)
+            g_error("search did not focus after pairing");
+        gtk_entry_set_text(GTK_ENTRY(app.query), "test book");
+        search_icon_clicked(NULL, &app);
+        {
+            gint64 deadline = g_get_monotonic_time() + 10 * G_USEC_PER_SEC;
+            while (app.active_tasks && g_get_monotonic_time() < deadline) {
+                drain_events();
+                g_usleep(10000);
+            }
+        }
+        drain_events();
+        {
+            GtkWidget *result = find_data_button(app.results, "book-row");
+            BookRow *row = result ? g_object_get_data(G_OBJECT(result), "book-row") : NULL;
+            if (app.active_tasks || app.view != VIEW_SEARCH || !app.has_next || !row ||
+                row->book->year != 2022 || g_strcmp0(row->book->title, "A Book") != 0)
+                g_error("search icon did not load results from the relay (tasks=%u view=%u ready=%d row=%p status=%s)",
+                        app.active_tasks, app.view, app.catalog_ready, row, gtk_label_get_text(GTK_LABEL(app.status)));
+        }
         gtk_widget_destroy(app.window);
         bookrelay_config_free(app.config);
         bookrelay_favorites_free(app.favorites);
@@ -200,6 +223,22 @@ int main(int argc, char **argv) {
         g_signal_emit_by_name(settings->code, "activate");
         if (!*gtk_label_get_text(GTK_LABEL(settings->feedback)))
             g_error("code Enter did not invoke connection validation");
+        gtk_widget_destroy(settings->window);
+        app.catalog_ready = TRUE;
+        search_icon_clicked(NULL, &app);
+        drain_events();
+        expect_visible(app.query, "native search entry");
+        if (gtk_window_get_focus(GTK_WINDOW(app.window)) != app.query)
+            g_error("native search entry did not receive keyboard focus");
+        search_keyboard = g_object_get_data(G_OBJECT(app.keyboard), "bookrelay-keyboard-state");
+        if (!search_keyboard->native_open) g_error("native search did not open the Kindle keyboard");
+        if (!gdk_test_simulate_key(app.query->window, 12, 12, GDK_a, 0, GDK_KEY_PRESS) ||
+            !gdk_test_simulate_key(app.query->window, 12, 12, GDK_a, 0, GDK_KEY_RELEASE))
+            g_error("could not simulate native keyboard input");
+        drain_events();
+        if (g_strcmp0(gtk_entry_get_text(GTK_ENTRY(app.query)), "a") != 0)
+            g_error("native keyboard input was not entered into search");
+        snapshot(&app, argv[1], "search-native.png");
         gtk_widget_destroy(app.window);
         bookrelay_config_free(app.config);
         bookrelay_favorites_free(app.favorites);
@@ -290,8 +329,8 @@ int main(int argc, char **argv) {
     drain_events();
     expect_visible(app.query, "inline search field");
     expect_inside_window(&app, app.query, "inline search field");
-    gtk_widget_grab_focus(app.query);
-    drain_events();
+    if (gtk_window_get_focus(GTK_WINDOW(app.window)) != app.query)
+        g_error("search entry did not receive keyboard focus");
     expect_visible(app.keyboard, "search keyboard after focus");
     expect_inside_window(&app, app.keyboard, "search keyboard");
     search_keyboard = g_object_get_data(G_OBJECT(app.keyboard), "bookrelay-keyboard-state");
@@ -375,6 +414,16 @@ int main(int argc, char **argv) {
         bookrelay_favorites_free(reloaded);
     }
     gtk_widget_destroy(details->window);
+    drain_events();
+    show_delivery_page(&app);
+    drain_events();
+    if (!app.delivery_page || !app.delivery_label ||
+        g_strcmp0(gtk_label_get_text(GTK_LABEL(app.delivery_label)), "Книга скачивается…") != 0)
+        g_error("download progress page did not open");
+    expect_inside_window(&app, app.delivery_label, "download progress");
+    snapshot(&app, argv[1], "download-progress.png");
+    gtk_widget_destroy(app.delivery_page);
+    if (app.delivery_page || app.delivery_label) g_error("download progress page pointers were not cleared");
     drain_events();
     {
         GdkEventButton event = {0};

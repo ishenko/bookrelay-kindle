@@ -1,6 +1,7 @@
 import html
 import re
 from collections import OrderedDict
+from urllib.error import HTTPError, URLError
 from threading import Lock
 from time import monotonic
 from xml.etree import ElementTree as ET
@@ -14,6 +15,10 @@ from ..models import Book
 TAG_RE = re.compile(r"<[^>]+>")
 ATOM = "{http://www.w3.org/2005/Atom}"
 DC = "{http://purl.org/dc/terms/}"
+
+
+class SourceUnavailable(Exception):
+    pass
 
 
 def parse_opds_feed(payload: bytes, base_url: str) -> tuple[list[dict[str, str]], list[Book], bool]:
@@ -84,18 +89,21 @@ class FlibustaSource:
 
     def _get(self, path: str) -> bytes:
         request = Request(urljoin(self.base_url + "/", path.lstrip("/")), headers={"User-Agent": "BookRelay/0.1"})
-        with urlopen(request, timeout=self.timeout) as response:
-            payload = response.read(25 * 1024 * 1024 + 1)
-            if len(payload) > 25 * 1024 * 1024:
-                raise ValueError("source response exceeds 25 MiB")
-            return payload
+        try:
+            with urlopen(request, timeout=self.timeout) as response:
+                payload = response.read(25 * 1024 * 1024 + 1)
+                if len(payload) > 25 * 1024 * 1024:
+                    raise ValueError("source response exceeds 25 MiB")
+                return payload
+        except (HTTPError, URLError, OSError, TimeoutError) as exc:
+            raise SourceUnavailable("Flibusta did not respond; please retry") from exc
 
     def search(self, query: str, page: int = 1, category: str | None = None) -> list[Book]:
         return self.search_page(query, page)[0]
 
     def search_page(self, query: str, page: int = 1, size: int = 6) -> tuple[list[Book], bool]:
-        suffix = f"/opds/search?searchTerm={quote_plus(query.strip())}"
-        return self._paged_books(suffix, page, size)
+        suffix = f"/opds/search?searchType=books&searchTerm={quote_plus(query.strip())}"
+        return self._paged_books(suffix, page, size, cache=True)
 
     def _catalog_feed(self, path: str) -> bytes:
         now = monotonic()
@@ -104,7 +112,18 @@ class FlibustaSource:
             if cached and now - cached[0] < 300:
                 self._feed_cache.move_to_end(path)
                 return cached[1]
-        payload = self._get(path)
+        try:
+            payload = self._get(path)
+        except SourceUnavailable:
+            if cached:
+                return cached[1]
+            raise
+        try:
+            ET.fromstring(payload)
+        except ET.ParseError as exc:
+            if cached:
+                return cached[1]
+            raise SourceUnavailable("Flibusta returned an invalid catalog") from exc
         if len(payload) <= 512 * 1024:
             with self._feed_cache_lock:
                 old = self._feed_cache.pop(path, None)
@@ -123,11 +142,14 @@ class FlibustaSource:
         books_seen: list[Book] = []
         visited: set[str] = set()
         while path and len(books_seen) < target:
-            if path in visited:
-                raise ValueError("cyclic OPDS pagination")
+            if path in visited or len(visited) >= 100:
+                raise SourceUnavailable("Flibusta returned invalid pagination")
             visited.add(path)
             payload = self._catalog_feed(path) if cache else self._get(path)
-            root = ET.fromstring(payload)
+            try:
+                root = ET.fromstring(payload)
+            except ET.ParseError as exc:
+                raise SourceUnavailable("Flibusta returned an invalid catalog") from exc
             next_link = next((link.get("href") for link in root.findall(f"{ATOM}link") if link.get("rel") == "next"), None)
             _, books, _ = parse_opds_feed(payload, self.base_url)
             books_seen.extend(books)
@@ -135,13 +157,19 @@ class FlibustaSource:
         return books_seen[start:start + size], len(books_seen) > start + size or bool(path)
 
     def categories(self) -> list[dict[str, str]]:
-        sections, _, _ = parse_opds_feed(self._get("/opds/genres"), self.base_url)
+        try:
+            sections, _, _ = parse_opds_feed(self._catalog_feed("/opds/genres"), self.base_url)
+        except ET.ParseError as exc:
+            raise SourceUnavailable("Flibusta returned an invalid catalog") from exc
         return sections
 
     def subcategories(self, category: str) -> list[dict[str, str]]:
         if not re.fullmatch(r"/opds/genres/[^/?#]+", category):
             raise ValueError("unknown category")
-        sections, _, _ = parse_opds_feed(self._get(category), self.base_url)
+        try:
+            sections, _, _ = parse_opds_feed(self._catalog_feed(category), self.base_url)
+        except ET.ParseError as exc:
+            raise SourceUnavailable("Flibusta returned an invalid catalog") from exc
         return sections
 
     def catalog_books(self, category: str, subcategory: str, page: int = 1, size: int = 6) -> tuple[list[Book], bool]:

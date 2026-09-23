@@ -1,9 +1,58 @@
 import unittest
 
-from bookrelay.source.flibusta import FlibustaSource, parse_opds_feed, parse_search_page
+from bookrelay.source.flibusta import FlibustaSource, SourceUnavailable, parse_opds_feed, parse_search_page
 
 
 class FlibustaParserTests(unittest.TestCase):
+    def test_catalog_uses_stale_cached_feed_during_source_outage(self):
+        class StubSource(FlibustaSource):
+            def __init__(self):
+                super().__init__()
+                self.offline = False
+
+            def _get(self, path):
+                if self.offline:
+                    raise SourceUnavailable('offline')
+                return (b'<feed xmlns="http://www.w3.org/2005/Atom">'
+                        b'<entry><title>Books</title><link rel="subsection" '
+                        b'type="application/atom+xml;profile=opds-catalog" href="/opds/genres/1" />'
+                        b'</entry></feed>')
+
+        source = StubSource()
+        expected = source.categories()
+        source.offline = True
+        cached_time, cached_feed = source._feed_cache['/opds/genres']
+        source._feed_cache['/opds/genres'] = (cached_time - 301, cached_feed)
+        self.assertEqual(source.categories(), expected)
+        source.offline = False
+        source._get = lambda path: b'<html>temporarily unavailable'
+        self.assertEqual(source.categories(), expected)
+        self.assertEqual(source._feed_cache['/opds/genres'][1], cached_feed)
+
+    def test_invalid_source_feed_is_service_unavailable(self):
+        class StubSource(FlibustaSource):
+            def _get(self, path):
+                return b'<html>temporarily unavailable'
+
+        source = StubSource()
+        with self.assertRaises(SourceUnavailable):
+            source.categories()
+        with self.assertRaises(SourceUnavailable):
+            source.catalog_books('/opds/genres/1', '/opds/genres/1/2')
+
+    def test_search_requests_book_results_not_search_navigation(self):
+        class StubSource(FlibustaSource):
+            def _get(self, path):
+                self.path = path
+                return (b'<feed xmlns="http://www.w3.org/2005/Atom">'
+                        b'<entry><title>Book</title><link rel="http://opds-spec.org/acquisition/open-access" href="/b/123/epub" /></entry>'
+                        b'</feed>')
+        source = StubSource()
+        books, more = source.search_page('War & Peace', 1, 12)
+        self.assertEqual(source.path, '/opds/search?searchType=books&searchTerm=War+%26+Peace')
+        self.assertEqual([book.id for book in books], ['123'])
+        self.assertFalse(more)
+
     def test_opds_navigation_and_book_metadata(self):
         feed = b'''<feed xmlns="http://www.w3.org/2005/Atom" xmlns:dcterms="http://purl.org/dc/terms/">
           <link rel="next" href="/opds/genres/7?page=2" />

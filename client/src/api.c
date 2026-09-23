@@ -164,18 +164,45 @@ static gchar *json_string(const gchar *object, const gchar *key) {
     return result;
 }
 
-static gint json_int(const gchar *object, const gchar *key) {
-    gchar *needle = g_strdup_printf("\"%s\":", key);
+static const gchar *json_value(const gchar *object, const gchar *key) {
+    gchar *needle = g_strdup_printf("\"%s\"", key);
     const gchar *found = strstr(object, needle);
-    gint value = found ? (gint)g_ascii_strtoll(found + strlen(needle), NULL, 10) : 0;
     g_free(needle);
-    return value;
+    if (!found) return NULL;
+    found += strlen(key) + 2;
+    while (g_ascii_isspace(*found)) found++;
+    if (*found++ != ':') return NULL;
+    while (g_ascii_isspace(*found)) found++;
+    return found;
+}
+
+static gint json_int(const gchar *object, const gchar *key) {
+    const gchar *value = json_value(object, key);
+    return value ? (gint)g_ascii_strtoll(value, NULL, 10) : 0;
+}
+
+static gboolean json_true(const gchar *object, const gchar *key) {
+    const gchar *value = json_value(object, key);
+    return value && g_str_has_prefix(value, "true");
+}
+
+static const gchar *next_json_id(const gchar *cursor) {
+    while ((cursor = strstr(cursor, "\"id\"")) != NULL) {
+        const gchar *value = cursor + strlen("\"id\"");
+        while (g_ascii_isspace(*value)) value++;
+        if (*value++ == ':') {
+            while (g_ascii_isspace(*value)) value++;
+            if (*value == '"') return cursor;
+        }
+        cursor++;
+    }
+    return NULL;
 }
 
 static GPtrArray *parse_books(const gchar *json) {
     GPtrArray *books = g_ptr_array_new_with_free_func((GDestroyNotify)bookrelay_book_free);
     const gchar *cursor = json;
-    while ((cursor = strstr(cursor, "\"id\":\"")) != NULL) {
+    while ((cursor = next_json_id(cursor)) != NULL) {
         const gchar *end = strchr(cursor, '}');
         gchar *object;
         BookRelayBook *book;
@@ -215,7 +242,7 @@ GPtrArray *bookrelay_api_search(const gchar *base_url, const gchar *token, const
     long status;
     gchar *body = request("GET", url, token, NULL, &status, error);
     GPtrArray *books = body ? parse_books(body) : NULL;
-    if (has_next) *has_next = body && strstr(body, "\"has_next\":true") != NULL;
+    if (has_next) *has_next = body && json_true(body, "has_next");
     g_free(encoded); g_free(encoded_category); g_free(endpoint); g_free(url); g_free(body);
     return books;
 }
@@ -228,7 +255,7 @@ GPtrArray *bookrelay_api_subcategories(const gchar *base_url, const gchar *token
     gchar *body = request("GET", url, token, NULL, &status, error);
     GPtrArray *items = body ? g_ptr_array_new_with_free_func((GDestroyNotify)bookrelay_category_free) : NULL;
     const gchar *cursor = body;
-    while (items && (cursor = strstr(cursor, "\"id\":\"")) != NULL) {
+    while (items && (cursor = next_json_id(cursor)) != NULL) {
         const gchar *end = strchr(cursor, '}');
         BookRelayCategory *item;
         if (!end) break;
@@ -250,7 +277,7 @@ GPtrArray *bookrelay_api_catalog_books(const gchar *base_url, const gchar *token
     long status;
     gchar *body = request("GET", url, token, NULL, &status, error);
     GPtrArray *books = body ? parse_books(body) : NULL;
-    if (has_next) *has_next = body && strstr(body, "\"has_next\":true") != NULL;
+    if (has_next) *has_next = body && json_true(body, "has_next");
     g_free(encoded_category); g_free(encoded_subcategory); g_free(endpoint); g_free(url); g_free(body);
     return books;
 }
@@ -261,7 +288,7 @@ GPtrArray *bookrelay_api_categories(const gchar *base_url, const gchar *token, G
     gchar *body = request("GET", url, token, NULL, &status, error);
     GPtrArray *items = body ? g_ptr_array_new_with_free_func((GDestroyNotify)bookrelay_category_free) : NULL;
     const gchar *cursor = body;
-    while (items && (cursor = strstr(cursor, "\"id\":\"")) != NULL) {
+    while (items && (cursor = next_json_id(cursor)) != NULL) {
         const gchar *end = strchr(cursor, '}');
         BookRelayCategory *category;
         if (!end) break;

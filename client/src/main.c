@@ -38,6 +38,8 @@ typedef struct {
     GtkWidget *last_page;
     GtkWidget *page_label;
     GtkWidget *keyboard;
+    GtkWidget *delivery_page;
+    GtkWidget *delivery_label;
     guint columns;
     guint page;
     guint active_tasks;
@@ -971,7 +973,7 @@ static void update_pager(App *app) {
     if (app->view == VIEW_FAVORITES) count = app->favorites ? app->favorites->books->len : 0;
     total = MAX(1, (count + items_per_page(app) - 1) / items_per_page(app));
     if (app->view == VIEW_BOOKS || app->view == VIEW_SEARCH) {
-        text = app->has_next ? g_strdup_printf("Страница %u из ≥%u", app->page, app->page + 1)
+        text = app->has_next ? g_strdup_printf("Страница %u · далее ›", app->page)
                              : g_strdup_printf("Страница %u из %u", app->page, app->page);
     } else {
         text = g_strdup_printf("Страница %u из %u", app->page, total);
@@ -1148,6 +1150,36 @@ static void details_page_close(GtkButton *button, gpointer userdata) {
     gtk_widget_destroy(page->window);
 }
 
+static void delivery_page_destroyed(GtkWidget *widget, gpointer userdata) {
+    App *app = userdata;
+    if (app->delivery_page == widget) {
+        app->delivery_page = NULL;
+        app->delivery_label = NULL;
+    }
+}
+
+static void delivery_progress(App *app, const gchar *message) {
+    if (app->delivery_label) gtk_label_set_text(GTK_LABEL(app->delivery_label), message);
+    set_status(app, message);
+}
+
+static void show_delivery_page(App *app) {
+    GtkWidget *body, *actions, *close_button;
+    GtkWidget *page = new_kindle_page(app, "Доставка книги", &body, &actions);
+    if (!page) return;
+    app->delivery_page = page;
+    app->delivery_label = gtk_label_new("Книга скачивается…");
+    set_large_font(app->delivery_label, "Sans 22");
+    gtk_label_set_line_wrap(GTK_LABEL(app->delivery_label), TRUE);
+    gtk_misc_set_alignment(GTK_MISC(app->delivery_label), 0, 0);
+    gtk_box_pack_start(GTK_BOX(body), app->delivery_label, FALSE, FALSE, 12);
+    close_button = page_button("Вернуться к книгам");
+    gtk_box_pack_start(GTK_BOX(actions), close_button, TRUE, TRUE, 0);
+    g_signal_connect_swapped(close_button, "clicked", G_CALLBACK(gtk_widget_destroy), page);
+    g_signal_connect(page, "destroy", G_CALLBACK(delivery_page_destroyed), app);
+    gtk_widget_show_all(page);
+}
+
 static void details_page_send(GtkButton *button, gpointer userdata) {
     DetailsPage *page = userdata;
     App *app = page->app;
@@ -1158,13 +1190,14 @@ static void details_page_send(GtkButton *button, gpointer userdata) {
     }
     {
         AsyncTask *task = async_task_new(app, TASK_SEND);
-        set_status(app, "Отправляем книгу на Kindle…");
         copy_common_task_fields(task, app);
         task->book_id = g_strdup(page->book->id);
         task->title = g_strdup(page->book->title);
-        start_async_task(task);
+        gtk_widget_destroy(page->window);
+        show_delivery_page(app);
+        delivery_progress(app, "Книга скачивается…");
+        if (!start_async_task(task)) delivery_progress(app, "Не удалось запустить скачивание. Повторите попытку.");
     }
-    gtk_widget_destroy(page->window);
 }
 
 static void details_page_favorite(GtkButton *button, gpointer userdata) {
@@ -1744,13 +1777,15 @@ static gboolean async_task_complete(gpointer userdata) {
             break;
         case TASK_SEND:
             if (!task->job_id) {
-                show_error(app, "Не удалось создать задание", task->error);
+                gchar *message = g_strdup_printf("Не удалось начать скачивание: %s", task->error ? task->error->message : "relay не ответил");
+                delivery_progress(app, message);
+                g_free(message);
             } else {
                 DeliveryPoll *poll = g_new0(DeliveryPoll, 1);
                 poll->app = app;
                 poll->job_id = g_strdup(task->job_id);
                 poll->source_id = g_timeout_add_seconds(3, poll_delivery, poll);
-                set_status(app, "Задание создано, relay готовит EPUB…");
+                delivery_progress(app, "Книга скачивается и готовится к отправке…");
             }
             break;
         case TASK_DELIVERY_STATUS:
@@ -1759,11 +1794,13 @@ static gboolean async_task_complete(gpointer userdata) {
                 poll->request_pending = FALSE;
                 poll->attempts++;
                 if (!task->state && poll->attempts < 20) break;
-                if (!task->state) show_error(app, "Не удалось получить статус доставки", task->error);
-                else if (g_strcmp0(task->state, "sent") == 0) set_status(app, "Relay отправил EPUB; ожидайте доставку Amazon");
-                else if (g_strcmp0(task->state, "failed") == 0) set_status(app, "Relay не смог отправить EPUB");
-                else if (poll->attempts < 20) break;
-                else set_status(app, "Задание всё ещё выполняется; проверьте статус relay позже");
+                if (!task->state) delivery_progress(app, "Не удалось получить статус доставки. Проверьте relay.");
+                else if (g_strcmp0(task->state, "sent") == 0) delivery_progress(app, "EPUB передан почтовому серверу. Доставку на Kindle подтвердит Amazon.");
+                else if (g_strcmp0(task->state, "failed") == 0) delivery_progress(app, "Relay не смог отправить EPUB. Проверьте задание на сервере.");
+                else if (poll->attempts < 20) {
+                    delivery_progress(app, g_strcmp0(task->state, "sending") == 0 ? "EPUB отправляется…" : "Книга скачивается…");
+                    break;
+                } else delivery_progress(app, "Задание всё ещё выполняется. Проверьте его на сервере позже.");
                 if (poll->source_id) g_source_remove(poll->source_id);
                 g_free(poll->job_id);
                 g_free(poll);
@@ -1817,7 +1854,9 @@ static void search_icon_clicked(GtkButton *button, gpointer userdata) {
     update_pager(app);
     gtk_widget_hide(app->header_title);
     gtk_widget_show(app->search_row);
-    gtk_widget_grab_focus(app->query);
+    gtk_window_set_focus(GTK_WINDOW(app->window), app->query);
+    g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, focus_widget_idle,
+                    g_object_ref(app->query), g_object_unref);
 }
 
 static void help_clicked(GtkButton *button, gpointer userdata) {

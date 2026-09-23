@@ -142,14 +142,18 @@ static gchar *json_escape(const gchar *value) {
 }
 
 static gchar *json_string(const gchar *object, const gchar *key) {
-    gchar *needle = g_strdup_printf("\"%s\":\"", key);
+    gchar *needle = g_strdup_printf("\"%s\"", key);
     const gchar *start = strstr(object, needle);
     const gchar *cursor;
     GString *raw;
     gchar *result;
     g_free(needle);
     if (!start) return g_strdup("");
-    cursor = start + strlen(key) + 4;
+    cursor = start + strlen(key) + 2;
+    while (g_ascii_isspace(*cursor)) cursor++;
+    if (*cursor++ != ':') return g_strdup("");
+    while (g_ascii_isspace(*cursor)) cursor++;
+    if (*cursor++ != '"') return g_strdup("");
     raw = g_string_new(NULL);
     while (*cursor) {
         if (*cursor == '"' && (raw->len == 0 || raw->str[raw->len - 1] != '\\')) break;
@@ -193,7 +197,12 @@ static GPtrArray *parse_books(const gchar *json) {
 }
 
 static gchar *join_url(const gchar *base, const gchar *path) {
-    return g_strdup_printf("%s/%s", base, path[0] == '/' ? path + 1 : path);
+    gchar *trimmed = g_strdup(base);
+    gchar *url;
+    while (strlen(trimmed) && trimmed[strlen(trimmed) - 1] == '/') trimmed[strlen(trimmed) - 1] = 0;
+    url = g_strdup_printf("%s/%s", trimmed, path[0] == '/' ? path + 1 : path);
+    g_free(trimmed);
+    return url;
 }
 
 GPtrArray *bookrelay_api_search(const gchar *base_url, const gchar *token, const gchar *query, const gchar *category, gint page, gint size, gboolean *has_next, GError **error) {
@@ -297,6 +306,11 @@ BookRelayClaim *bookrelay_api_pair_claim(const gchar *base_url, const gchar *cod
         claim = g_new0(BookRelayClaim, 1);
         claim->token = json_string(response, "token");
         claim->kindle_email = json_string(response, "kindle_email");
+        if (!claim->token || !*claim->token) {
+            g_set_error(error, API_ERROR, 4, "relay ответил HTTP %ld, но не вернул токен устройства; проверьте адрес сервера и версию relay", status);
+            bookrelay_claim_free(claim);
+            claim = NULL;
+        }
     }
     g_free(url); g_free(escaped_code); g_free(body); g_free(response);
     return claim;

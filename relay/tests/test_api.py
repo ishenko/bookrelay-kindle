@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 import zipfile
+from datetime import datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 
@@ -52,6 +53,24 @@ class FakeMailer:
 
 
 class ApiTests(unittest.IsolatedAsyncioTestCase):
+    async def test_pair_page_shows_remaining_time_from_server_clock(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app = create_app(Path(tmp) / "relay.sqlite3", source=FakeSource(), mailer=FakeMailer(), pairing_admin_key="test-owner-key")
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+                page = await client.get("/pair")
+                self.assertEqual(page.status_code, 200)
+                self.assertIn("id='remaining'", page.text)
+                self.assertIn("id='lifetime'", page.text)
+                self.assertIn("performance.now()", page.text)
+                started = await client.post("/v1/pair/start", json={
+                    "device_id": "pw12", "kindle_email": "reader@kindle.com", "admin_key": "test-owner-key",
+                })
+                self.assertEqual(started.status_code, 200)
+                data = started.json()
+                duration = datetime.fromisoformat(data["expires_at"]) - datetime.fromisoformat(data["server_time"])
+                self.assertGreater(duration, timedelta(minutes=9, seconds=55))
+                self.assertLessEqual(duration, timedelta(minutes=10))
+
     async def test_catalog_navigation_and_empty_page(self):
         with tempfile.TemporaryDirectory() as tmp:
             app = create_app(Path(tmp) / "relay.sqlite3", source=FakeSource(), mailer=FakeMailer(), pairing_admin_key="test-owner-key")

@@ -86,16 +86,24 @@ function sendBook(book) {
 }
 
 function openPairing() {
-  const code = 'K7M4-29QX';
-  openModal('<div class="modal-header"><div><p class="eyebrow">ПОДКЛЮЧЕНИЕ УСТРОЙСТВА</p><h2>Pairing Kindle</h2><p class="modal-subtitle">Код создаётся на странице relay и действует 10 минут</p></div><button class="close-button" type="button" aria-label="Закрыть">×</button></div><label class="field">RELAY URL<input id="pair-relay-url" value="' + escapeHtml(state.relayUrl) + '" spellcheck="false"></label><label class="field">ОДНОРАЗОВЫЙ КОД<input id="pairing-code" value="' + code + '" autocomplete="off" spellcheck="false"></label><p class="helper">На VPS введите owner key на странице /pair, скопируйте код сюда и нажмите «Подключить». Kindle Email и SMTP остаются на сервере.</p><div class="modal-actions"><button class="outline-button close-action" type="button">Отмена</button><button class="ink-button paired-action" type="button">Подключить</button></div>');
-  $('.close-action')?.addEventListener('click', closeModal);
-  $('.paired-action')?.addEventListener('click', () => { state.relayUrl = $('#pair-relay-url').value || state.relayUrl; state.pairingCode = $('#pairing-code').value; state.paired = Boolean(state.relayUrl && state.pairingCode); closeModal(); $('#connection-status').textContent = 'Kindle подключён'; setStatus('Kindle привязан · можно отправлять книги'); });
+  openSettings();
 }
 
 function openSettings() {
-  openModal('<div class="modal-header"><div><p class="eyebrow">ЛОКАЛЬНАЯ КОНФИГУРАЦИЯ</p><h2>Настройки</h2><p class="modal-subtitle">Настройки сохраняются на Kindle</p></div><button class="close-button" type="button" aria-label="Закрыть">×</button></div><label class="field">RELAY URL<input id="relay-url" value="' + escapeHtml(state.relayUrl) + '" spellcheck="false"></label><p class="helper">Kindle Email и SMTP задаются на VPS. В preview relay не вызывается: кнопка имитирует только пользовательский сценарий.</p><div class="modal-actions"><button class="outline-button close-action" type="button">Отмена</button><button class="ink-button save-settings" type="button">Сохранить</button></div>');
+  openModal('<div class="modal-header"><div><p class="eyebrow">ПОДКЛЮЧЕНИЕ УСТРОЙСТВА</p><h2>Настройки</h2><p class="modal-subtitle">Сервер, почта Kindle и код на одном экране</p></div><button class="close-button" type="button" aria-label="Закрыть">×</button></div><form id="connect-form"><label class="field">СЕРВЕР БЕЗ HTTPS://<input id="relay-url" value="' + escapeHtml(state.relayUrl.replace(/^https:\/\//, '')) + '" spellcheck="false" required></label><label class="field">ПОЧТА KINDLE<input id="kindle-email" type="email" value="' + escapeHtml(state.email) + '" required></label><label class="field">КОД ПОДКЛЮЧЕНИЯ<input id="pairing-code" maxlength="8" autocomplete="off" spellcheck="false" required></label><p class="helper">Код создаётся на странице /pair сервера. Это демо: preview не отправляет запросы на relay и не проверяет срок действия кода.</p><p id="pair-feedback" class="helper"></p><div class="modal-actions"><button class="outline-button close-action" type="button">Отмена</button><button class="ink-button" type="submit">Подключить</button></div></form>');
   $('.close-action')?.addEventListener('click', closeModal);
-  $('.save-settings')?.addEventListener('click', () => { state.relayUrl = $('#relay-url').value || state.relayUrl; closeModal(); setStatus('Настройки сохранены'); if (state.paired) $('#connection-status').textContent = 'Kindle подключён'; });
+  $('#connect-form')?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const code = $('#pairing-code').value.trim().toUpperCase();
+    if (!/^[0-9A-F]{8}$/.test(code)) { $('#pair-feedback').textContent = 'Введите 8 символов кода'; return; }
+    state.relayUrl = 'https://' + $('#relay-url').value.trim().replace(/^https:\/\//, '');
+    state.email = $('#kindle-email').value.trim();
+    state.pairingCode = code;
+    state.paired = true;
+    closeModal();
+    $('#connection-status').textContent = 'Kindle подключён (демо)';
+    setStatus('Демо подключения · relay не вызывался');
+  });
 }
 
 function openExitConfirmation() {

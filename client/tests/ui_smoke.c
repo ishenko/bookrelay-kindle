@@ -9,6 +9,21 @@ static void drain_events(void) {
     gdk_display_sync(gdk_display_get_default());
 }
 
+static void wait_for_pairing(App *app, gboolean expect_error) {
+    gint64 deadline = g_get_monotonic_time() + 10 * G_USEC_PER_SEC;
+    while (g_get_monotonic_time() < deadline) {
+        SettingsPage *page;
+        drain_events();
+        if (!expect_error && app->catalog_ready) return;
+        page = app->page_window ? g_object_get_data(G_OBJECT(app->page_window), "bookrelay-settings-page") : NULL;
+        if (expect_error && page && page->claimed &&
+            GTK_WIDGET_IS_SENSITIVE(g_object_get_data(G_OBJECT(page->window), "bookrelay-settings-connect")) &&
+            strstr(gtk_label_get_text(GTK_LABEL(page->feedback)), "почта не сохранена")) return;
+        g_usleep(10000);
+    }
+    g_error("pairing workflow timed out");
+}
+
 static void expect_visible(GtkWidget *widget, const char *name) {
     if (!GTK_WIDGET_VISIBLE(widget) || !GTK_WIDGET_MAPPED(widget))
         g_error("%s is not visible and mapped", name);
@@ -101,7 +116,6 @@ static void snapshot(App *app, const gchar *dir, const char *name) {
 
 int main(int argc, char **argv) {
     App app = {0};
-    PairPage *pair;
     SettingsPage *settings;
     VirtualKeyboard *search_keyboard;
     GtkWidget *letter;
@@ -122,6 +136,30 @@ int main(int argc, char **argv) {
     drain_events();
     settings = g_object_get_data(G_OBJECT(app.page_window), "bookrelay-settings-page");
     if (!settings) g_error("setup screen did not open on first launch");
+    if (g_getenv("BOOKRELAY_TEST_PAIR_URL")) {
+        BookRelayConfig *saved;
+        gtk_entry_set_text(settings->relay, g_getenv("BOOKRELAY_TEST_PAIR_URL"));
+        gtk_entry_set_text(settings->email, "reader@kindle.com");
+        gtk_entry_set_text(settings->code, "abcdef12");
+        g_signal_emit_by_name(settings->code, "activate");
+        wait_for_pairing(&app, TRUE);
+        if (gtk_entry_get_text_length(settings->code) != 0) g_error("claimed code was not cleared");
+        saved = bookrelay_config_load(app.config_path);
+        if (g_strcmp0(saved->token, "mock-device-token") != 0)
+            g_error("claim token was not saved before email update failed");
+        bookrelay_config_free(saved);
+        g_signal_emit_by_name(settings->code, "activate");
+        wait_for_pairing(&app, FALSE);
+        saved = bookrelay_config_load(app.config_path);
+        if (g_strcmp0(saved->kindle_email, "reader@kindle.com") != 0)
+            g_error("email was not saved after retry without a code");
+        bookrelay_config_free(saved);
+        gtk_widget_destroy(app.window);
+        bookrelay_config_free(app.config);
+        g_free(app.config_path);
+        curl_global_cleanup();
+        return 0;
+    }
     if (g_getenv("BOOKRELAY_TEST_NATIVE")) {
         GtkWidget *actions = g_object_get_data(G_OBJECT(settings->window), "bookrelay-page-actions");
         if (!settings->keyboard->native_open)
@@ -142,6 +180,10 @@ int main(int argc, char **argv) {
         }
         drain_events();
         if (settings->keyboard->native_open) g_error("background tap did not close Kindle keyboard");
+        virtual_keyboard_show_for(settings->keyboard, settings->code);
+        g_signal_emit_by_name(settings->code, "activate");
+        if (!*gtk_label_get_text(GTK_LABEL(settings->feedback)))
+            g_error("code Enter did not invoke connection validation");
         gtk_widget_destroy(app.window);
         bookrelay_config_free(app.config);
         g_free(app.config_path);
@@ -151,6 +193,7 @@ int main(int argc, char **argv) {
     expect_visible(settings->keyboard->root, "settings keyboard");
     expect_inside_window(&app, GTK_WIDGET(settings->relay), "settings relay field");
     expect_inside_window(&app, GTK_WIDGET(settings->email), "settings email field");
+    expect_inside_window(&app, GTK_WIDGET(settings->code), "settings code field");
     if (!GTK_WIDGET_IS_SENSITIVE(GTK_WIDGET(settings->email))) g_error("Kindle email is disabled");
     if (g_strcmp0(normalize_relay_url("example.org"), "https://example.org") != 0)
         g_error("server name was not upgraded to HTTPS");
@@ -182,24 +225,20 @@ int main(int argc, char **argv) {
     if (!g_str_has_suffix(gtk_entry_get_text(settings->relay), ":й"))
         g_error("Russian keyboard inserted the wrong character");
 
-    settings_pair_clicked(NULL, settings);
-    drain_events();
-    pair = g_object_get_data(G_OBJECT(app.page_window), "bookrelay-pair-page");
-    if (!pair) g_error("pairing page not created");
-    expect_visible(pair->keyboard->root, "pairing keyboard");
-    expect_inside_window(&app, GTK_WIDGET(pair->relay), "relay field");
-    expect_inside_window(&app, GTK_WIDGET(pair->code), "code field");
-    expect_inside_window(&app, pair->keyboard->root, "pairing keyboard");
-    virtual_keyboard_show_for(pair->keyboard, pair->code);
-    gtk_button_clicked(GTK_BUTTON(g_ptr_array_index(pair->keyboard->letter_buttons, 0)));
-    if (g_strcmp0(gtk_entry_get_text(pair->code), "q") != 0)
-        g_error("pairing keyboard did not insert into code field");
+    virtual_keyboard_show_for(settings->keyboard, settings->code);
+    if (settings->keyboard->cyrillic) press_key(settings->keyboard->root, "EN");
+    gtk_button_clicked(GTK_BUTTON(g_ptr_array_index(settings->keyboard->letter_buttons, 0)));
+    if (g_strcmp0(gtk_entry_get_text(settings->code), "q") != 0)
+        g_error("keyboard did not insert into code field");
+    g_signal_emit_by_name(settings->code, "activate");
+    if (!*gtk_label_get_text(GTK_LABEL(settings->feedback)))
+        g_error("code Enter did not invoke connection validation");
     snapshot(&app, argv[1], "pairing.png");
 
     /* Simulate successful setup without starting a network request. */
     app.config->token = g_strdup("smoke-test-token");
     app.catalog_ready = TRUE;
-    gtk_widget_destroy(pair->window);
+    gtk_widget_destroy(settings->window);
     drain_events();
     if (app.page_window || gtk_notebook_get_current_page(GTK_NOTEBOOK(app.pages)) != 0)
         g_error("closing pairing did not restore main page");

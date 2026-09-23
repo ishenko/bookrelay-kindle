@@ -15,7 +15,6 @@ class KindleUiContractTests(unittest.TestCase):
         self.assertIn('"/v1/pair/claim"', api)
         self.assertIn("одноразовый код", source.lower())
         self.assertNotIn("poll_pairing", source)
-        self.assertNotIn("TASK_PAIR_STATUS", source)
         self.assertNotIn("Откройте relay /pair", source)
 
     def test_search_ui_has_page_navigation(self):
@@ -43,6 +42,7 @@ class KindleUiContractTests(unittest.TestCase):
         self.assertIn("search_entry_activate", source)
         self.assertIn("gtk_entry_set_activates_default", source)
         self.assertIn("virtual_keyboard_bind(page->keyboard, page->code)", source)
+        self.assertIn("settings_code_activate", source)
         self.assertIn("virtual_keyboard_new(root, GTK_ENTRY(app->query))", source)
         self.assertIn("gtk_widget_show(keyboard->root)", source)
         self.assertIn("gtk_widget_show(app->search_row)", source)

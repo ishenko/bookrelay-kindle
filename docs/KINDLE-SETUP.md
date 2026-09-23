@@ -55,7 +55,7 @@ After installation:
 
 1. Launch BookRelay Kindle from the installed application entry.
 2. On a computer, open https://your-relay.example/pair, enter the Kindle Email for this device and the Dokploy owner key, and copy the generated one-time code. Repeat with a new code for every Kindle.
-3. Press Pairing on Kindle, enter the HTTPS relay URL and the code, then press Connect.
+3. On the relay /pair page, watch the remaining validity next to the generated code. On the Kindle settings screen, enter the server hostname without https://, the Kindle Email, and the 8-character code (either case). Press Connect or Enter.
 4. Search for a book and choose Send to Kindle.
 
 The client stores its relay URL, the Kindle Email returned by the relay, and a revocable token below user storage. The one-time code is not stored. The token can be revoked from the relay API by calling the revoke action with the token, or by deleting the device record from the relay database during maintenance.
@@ -69,6 +69,7 @@ If the client does not launch, remove the launcher file from user storage and re
 ## Troubleshooting
 
 - If search returns 401, pair the device again or check whether its relay token was revoked.
+- If pairing fails, read the message on the setup screen: it distinguishes relay HTTP errors, a response without a device token, and an email-update failure. A code that was already claimed cannot be claimed again. If the email update failed after claim, leave the code blank and press Connect to retry with the saved device token.
 - If the relay accepts a job but no book arrives, inspect SMTP logs and Amazon's approved sender list.
 - If covers are missing, the book and metadata APIs can still work; cover retrieval is a separate HTTP request.
 - If an EPUB is rejected, verify that it is a valid EPUB ZIP with an uncompressed mimetype entry and is below the relay size limit.

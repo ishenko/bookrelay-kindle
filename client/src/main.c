@@ -71,15 +71,10 @@ typedef struct {
     App *app;
     GtkWidget *window;
     GtkEntry *relay;
-    GtkEntry *code;
-    VirtualKeyboard *keyboard;
-} PairPage;
-
-typedef struct {
-    App *app;
-    GtkWidget *window;
-    GtkEntry *relay;
     GtkEntry *email;
+    GtkEntry *code;
+    GtkWidget *feedback;
+    gboolean claimed;
     VirtualKeyboard *keyboard;
 } SettingsPage;
 
@@ -125,7 +120,6 @@ typedef struct {
     gboolean has_next;
     GtkWidget *image;
     GtkWidget *placeholder;
-    GtkWidget *pair_page;
     GtkWidget *settings_page;
     DeliveryPoll *delivery_poll;
     GPtrArray *books;
@@ -265,9 +259,7 @@ static gboolean virtual_keyboard_background_press(GtkWidget *widget, GdkEventBut
     VirtualKeyboard *keyboard = NULL;
     if (app->page_window) {
         SettingsPage *settings = g_object_get_data(G_OBJECT(app->page_window), "bookrelay-settings-page");
-        PairPage *pair = g_object_get_data(G_OBJECT(app->page_window), "bookrelay-pair-page");
         if (settings) keyboard = settings->keyboard;
-        else if (pair) keyboard = pair->keyboard;
     } else if (app->keyboard) {
         keyboard = g_object_get_data(G_OBJECT(app->keyboard), "bookrelay-keyboard-state");
     }
@@ -1368,113 +1360,6 @@ static void load_categories(App *app) {
     start_async_task(task);
 }
 
-static void pair_page_cancel(GtkButton *button, gpointer userdata) {
-    PairPage *page = userdata;
-    gtk_widget_destroy(page->window);
-}
-
-static void pair_page_connect(GtkButton *button, gpointer userdata) {
-    PairPage *page = userdata;
-    App *app = page->app;
-    const gchar *pairing_code = gtk_entry_get_text(page->code);
-    gchar *relay_url = normalize_relay_url(gtk_entry_get_text(page->relay));
-    gchar *normalized_code = g_ascii_strup(pairing_code ? pairing_code : "", -1);
-    g_strstrip(normalized_code);
-
-    if (!valid_relay_url(relay_url)) {
-        set_status(app, "Введите адрес сервера, например relay.example.com");
-        gtk_window_set_focus(GTK_WINDOW(app->window), GTK_WIDGET(page->relay));
-        virtual_keyboard_show_for(page->keyboard, page->relay);
-        g_free(relay_url);
-        g_free(normalized_code);
-        return;
-    }
-    if (!*normalized_code) {
-        set_status(app, "Введите одноразовый код");
-        gtk_window_set_focus(GTK_WINDOW(app->window), GTK_WIDGET(page->code));
-        virtual_keyboard_show_for(page->keyboard, page->code);
-        g_free(relay_url);
-        g_free(normalized_code);
-        return;
-    }
-    {
-        AsyncTask *task = async_task_new(app, TASK_PAIR_CLAIM);
-        task->base_url = g_strdup(relay_url);
-        task->code = g_strdup(normalized_code);
-        task->pair_page = page->window;
-        set_status(app, "Подключаем Kindle…");
-        if (start_async_task(task)) {
-            GtkWidget *connect = g_object_get_data(G_OBJECT(page->window), "bookrelay-pair-connect");
-            gtk_widget_set_sensitive(connect, FALSE);
-        }
-    }
-    g_free(relay_url);
-    g_free(normalized_code);
-}
-
-static void pair_clicked(GtkButton *button, gpointer userdata) {
-    App *app = userdata;
-    GtkWidget *body;
-    GtkWidget *actions;
-    GtkWidget *window;
-    GtkWidget *intro;
-    GtkWidget *relay_label;
-    GtkWidget *code_label;
-    GtkWidget *connect_button;
-    GtkWidget *cancel_button;
-    PairPage *page;
-
-    window = new_kindle_page(app, "Подключение", &body, &actions);
-    if (!window) return;
-    page = g_new0(PairPage, 1);
-    page->app = app;
-    page->window = window;
-    page->relay = GTK_ENTRY(gtk_entry_new());
-    page->code = GTK_ENTRY(gtk_entry_new());
-    g_object_set_data_full(G_OBJECT(window), "bookrelay-pair-page", page, g_free);
-
-    intro = gtk_label_new("Введите адрес сервера без https:// и одноразовый код.");
-    relay_label = gtk_label_new("Адрес сервера");
-    code_label = gtk_label_new("Код подключения");
-    gtk_label_set_line_wrap(GTK_LABEL(intro), TRUE);
-    gtk_misc_set_alignment(GTK_MISC(intro), 0, 0.5);
-    gtk_misc_set_alignment(GTK_MISC(relay_label), 0, 0.5);
-    gtk_misc_set_alignment(GTK_MISC(code_label), 0, 0.5);
-    set_large_font(intro, "Sans 21");
-    set_large_font(relay_label, "Sans Bold 22");
-    set_large_font(code_label, "Sans Bold 22");
-    set_large_font(GTK_WIDGET(page->relay), "Sans 25");
-    set_large_font(GTK_WIDGET(page->code), "Sans 25");
-    gtk_entry_set_width_chars(page->relay, 8);
-    gtk_entry_set_width_chars(page->code, 8);
-    gtk_widget_set_size_request(GTK_WIDGET(page->relay), -1, 70);
-    gtk_widget_set_size_request(GTK_WIDGET(page->code), -1, 70);
-    gtk_entry_set_text(page->relay, display_relay_url(app->config->relay_url));
-    gtk_entry_set_max_length(page->code, 32);
-    gtk_box_pack_start(GTK_BOX(body), intro, FALSE, FALSE, 4);
-    gtk_box_pack_start(GTK_BOX(body), relay_label, FALSE, FALSE, 4);
-    gtk_box_pack_start(GTK_BOX(body), GTK_WIDGET(page->relay), FALSE, FALSE, 4);
-    gtk_box_pack_start(GTK_BOX(body), code_label, FALSE, FALSE, 4);
-    gtk_box_pack_start(GTK_BOX(body), GTK_WIDGET(page->code), FALSE, FALSE, 4);
-    page->keyboard = virtual_keyboard_new(NULL, page->relay);
-    virtual_keyboard_bind(page->keyboard, page->code);
-    attach_page_keyboard(window, page->keyboard);
-
-    cancel_button = page_button("Отмена");
-    connect_button = page_button("Подключить");
-    g_object_set_data(G_OBJECT(window), "bookrelay-pair-connect", connect_button);
-    ink_primary_button(connect_button);
-    g_signal_connect(cancel_button, "clicked", G_CALLBACK(pair_page_cancel), page);
-    g_signal_connect(connect_button, "clicked", G_CALLBACK(pair_page_connect), page);
-    gtk_box_pack_start(GTK_BOX(actions), cancel_button, TRUE, TRUE, 0);
-    gtk_box_pack_start(GTK_BOX(actions), connect_button, TRUE, TRUE, 0);
-    gtk_widget_show_all(window);
-    virtual_keyboard_show_for(page->keyboard, page->relay);
-    gtk_window_set_focus(GTK_WINDOW(app->window), GTK_WIDGET(page->relay));
-    g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, focus_widget_idle,
-                    g_object_ref(page->relay), g_object_unref);
-}
-
 static gboolean poll_delivery(gpointer userdata) {
     DeliveryPoll *poll = userdata;
     AsyncTask *task;
@@ -1497,58 +1382,58 @@ static void settings_page_cancel(GtkButton *button, gpointer userdata) {
     gtk_widget_destroy(page->window);
 }
 
-static void settings_page_save(GtkButton *button, gpointer userdata) {
+static void settings_page_connect(GtkButton *button, gpointer userdata) {
     SettingsPage *page = userdata;
     App *app = page->app;
+    GtkWidget *connect = g_object_get_data(G_OBJECT(page->window), "bookrelay-settings-connect");
     gchar *relay_url = normalize_relay_url(gtk_entry_get_text(page->relay));
     gchar *email = g_strdup(gtk_entry_get_text(page->email));
+    gchar *code = g_ascii_strup(gtk_entry_get_text(page->code), -1);
+    AsyncTask *task;
+    GError *save_error = NULL;
+    gboolean reuse_token;
     g_strstrip(email);
+    g_strstrip(code);
+    if (!GTK_WIDGET_IS_SENSITIVE(connect)) goto done;
+    reuse_token = page->claimed && !*code && app->config->token && *app->config->token &&
+                  g_strcmp0(relay_url, app->config->relay_url) == 0;
     if (!valid_relay_url(relay_url)) {
-        set_status(app, "Введите адрес сервера, например relay.example.com");
+        gtk_label_set_text(GTK_LABEL(page->feedback), "Введите адрес сервера, например book.example.com");
         gtk_window_set_focus(GTK_WINDOW(app->window), GTK_WIDGET(page->relay));
         virtual_keyboard_show_for(page->keyboard, page->relay);
-        g_free(relay_url);
-        g_free(email);
-        return;
-    }
-    if (g_strcmp0(email, app->config->kindle_email ? app->config->kindle_email : "") != 0) {
-        AsyncTask *task;
-        if (!app->config->token || !*app->config->token) {
-            set_status(app, "Сначала подключите Kindle с кодом на relay");
-            g_free(relay_url);
-            g_free(email);
-            return;
+    } else if (!strchr(email, '@') || strchr(email, ' ') || !strchr(strchr(email, '@'), '.')) {
+        gtk_label_set_text(GTK_LABEL(page->feedback), "Введите корректную почту Kindle");
+        gtk_window_set_focus(GTK_WINDOW(app->window), GTK_WIDGET(page->email));
+        virtual_keyboard_show_for(page->keyboard, page->email);
+    } else if (!reuse_token && (strlen(code) != 8 || strspn(code, "0123456789ABCDEF") != 8)) {
+        gtk_label_set_text(GTK_LABEL(page->feedback), "Введите 8 символов одноразового кода");
+        gtk_window_set_focus(GTK_WINDOW(app->window), GTK_WIDGET(page->code));
+        virtual_keyboard_show_for(page->keyboard, page->code);
+    } else {
+        if (reuse_token && !bookrelay_config_save(app->config, app->config_path, &save_error)) {
+            gchar *message = g_strdup_printf("Код принят, но токен не сохранён на Kindle: %s. Проверьте свободное место и повторите без кода.",
+                                             save_error ? save_error->message : "ошибка записи");
+            gtk_label_set_text(GTK_LABEL(page->feedback), message);
+            g_free(message);
+            g_clear_error(&save_error);
+            goto done;
         }
-        if (!strchr(email, '@') || strchr(email, ' ')) {
-            set_status(app, "Введите корректную почту Kindle");
-            g_free(relay_url);
-            g_free(email);
-            return;
-        }
-        task = async_task_new(app, TASK_UPDATE_EMAIL);
-        task->base_url = relay_url;
-        task->token = g_strdup(app->config->token);
-        task->email = email;
+        task = async_task_new(app, reuse_token ? TASK_UPDATE_EMAIL : TASK_PAIR_CLAIM);
+        task->base_url = g_strdup(relay_url);
+        task->code = g_strdup(code);
+        task->email = g_strdup(email);
+        if (task->kind == TASK_UPDATE_EMAIL) task->token = g_strdup(app->config->token);
         task->settings_page = page->window;
-        set_status(app, "Сохраняем почту Kindle на relay…");
-        if (start_async_task(task))
-            gtk_widget_set_sensitive(g_object_get_data(G_OBJECT(page->window), "bookrelay-settings-save"), FALSE);
-        return;
+        gtk_label_set_text(GTK_LABEL(page->feedback), "Подключаем Kindle…");
+        if (start_async_task(task)) gtk_widget_set_sensitive(connect, FALSE);
+        else gtk_label_set_text(GTK_LABEL(page->feedback), "Не удалось запустить подключение. Повторите попытку.");
     }
-    g_free(email);
-    g_free(app->config->relay_url);
-    app->config->relay_url = relay_url;
-    bookrelay_config_save(app->config, app->config_path, NULL);
-    set_status(app, "Настройки сохранены");
-    if (!app->catalog_ready) load_categories(app);
-    gtk_widget_destroy(page->window);
+done:
+    g_free(relay_url); g_free(email); g_free(code);
 }
 
-static void settings_pair_clicked(GtkButton *button, gpointer userdata) {
-    SettingsPage *page = userdata;
-    App *app = page->app;
-    gtk_widget_destroy(page->window);
-    pair_clicked(NULL, app);
+static void settings_code_activate(GtkEntry *entry, gpointer userdata) {
+    settings_page_connect(NULL, userdata);
 }
 
 static void settings_clicked(GtkButton *button, gpointer userdata) {
@@ -1559,9 +1444,9 @@ static void settings_clicked(GtkButton *button, gpointer userdata) {
     GtkWidget *relay_label;
     GtkWidget *email_label;
     GtkWidget *hint;
+    GtkWidget *code_label;
     GtkWidget *cancel_button;
-    GtkWidget *save_button;
-    GtkWidget *pair_button;
+    GtkWidget *connect_button;
     SettingsPage *page;
 
     window = new_kindle_page(app, "Настройки", &body, &actions);
@@ -1571,46 +1456,61 @@ static void settings_clicked(GtkButton *button, gpointer userdata) {
     page->window = window;
     page->relay = GTK_ENTRY(gtk_entry_new());
     page->email = GTK_ENTRY(gtk_entry_new());
+    page->code = GTK_ENTRY(gtk_entry_new());
+    page->claimed = app->config->token && *app->config->token;
+    page->feedback = gtk_label_new("");
     g_object_set_data_full(G_OBJECT(window), "bookrelay-settings-page", page, g_free);
 
     relay_label = gtk_label_new("Адрес сервера");
     email_label = gtk_label_new("Почта Kindle");
-    hint = gtk_label_new("Адрес для доставки книг. Изменение сохранится на сервере.");
+    code_label = gtk_label_new("Код подключения");
+    hint = gtk_label_new("Создайте код на странице /pair вашего сервера. Если устройство уже подключено, оставьте код пустым, чтобы обновить почту.");
     gtk_label_set_line_wrap(GTK_LABEL(hint), TRUE);
     gtk_misc_set_alignment(GTK_MISC(hint), 0, 0.5);
     gtk_misc_set_alignment(GTK_MISC(relay_label), 0, 0.5);
     gtk_misc_set_alignment(GTK_MISC(email_label), 0, 0.5);
+    gtk_misc_set_alignment(GTK_MISC(code_label), 0, 0.5);
+    gtk_misc_set_alignment(GTK_MISC(page->feedback), 0, 0.5);
+    gtk_label_set_line_wrap(GTK_LABEL(page->feedback), TRUE);
     set_large_font(relay_label, "Sans 21");
     set_large_font(email_label, "Sans 21");
+    set_large_font(code_label, "Sans 21");
+    set_large_font(page->feedback, "Sans 19");
     set_large_font(hint, "Sans 20");
     set_large_font(GTK_WIDGET(page->relay), "Sans 25");
     set_large_font(GTK_WIDGET(page->email), "Sans 25");
+    set_large_font(GTK_WIDGET(page->code), "Sans 25");
     gtk_widget_set_size_request(GTK_WIDGET(page->relay), -1, 70);
     gtk_widget_set_size_request(GTK_WIDGET(page->email), -1, 70);
+    gtk_widget_set_size_request(GTK_WIDGET(page->code), -1, 70);
     gtk_entry_set_width_chars(page->relay, 8);
     gtk_entry_set_width_chars(page->email, 8);
+    gtk_entry_set_width_chars(page->code, 8);
+    gtk_entry_set_max_length(page->code, 8);
     gtk_entry_set_text(page->relay, display_relay_url(app->config->relay_url));
     gtk_entry_set_text(page->email, app->config->kindle_email ? app->config->kindle_email : "");
     gtk_box_pack_start(GTK_BOX(body), relay_label, FALSE, FALSE, 4);
     gtk_box_pack_start(GTK_BOX(body), GTK_WIDGET(page->relay), FALSE, FALSE, 4);
     gtk_box_pack_start(GTK_BOX(body), email_label, FALSE, FALSE, 4);
     gtk_box_pack_start(GTK_BOX(body), GTK_WIDGET(page->email), FALSE, FALSE, 4);
+    gtk_box_pack_start(GTK_BOX(body), code_label, FALSE, FALSE, 4);
+    gtk_box_pack_start(GTK_BOX(body), GTK_WIDGET(page->code), FALSE, FALSE, 4);
+    gtk_box_pack_start(GTK_BOX(body), page->feedback, FALSE, FALSE, 4);
     gtk_box_pack_start(GTK_BOX(body), hint, FALSE, FALSE, 4);
     page->keyboard = virtual_keyboard_new(NULL, page->relay);
     virtual_keyboard_bind(page->keyboard, page->email);
+    virtual_keyboard_bind(page->keyboard, page->code);
+    g_signal_connect(page->code, "activate", G_CALLBACK(settings_code_activate), page);
     attach_page_keyboard(window, page->keyboard);
 
     cancel_button = page_button(app->catalog_ready ? "Отмена" : "Выход");
-    save_button = page_button("Сохранить");
-    g_object_set_data(G_OBJECT(window), "bookrelay-settings-save", save_button);
-    pair_button = page_button("Подключение");
-    ink_primary_button(save_button);
+    connect_button = page_button("Подключить");
+    g_object_set_data(G_OBJECT(window), "bookrelay-settings-connect", connect_button);
+    ink_primary_button(connect_button);
     g_signal_connect(cancel_button, "clicked", G_CALLBACK(settings_page_cancel), page);
-    g_signal_connect(save_button, "clicked", G_CALLBACK(settings_page_save), page);
-    g_signal_connect(pair_button, "clicked", G_CALLBACK(settings_pair_clicked), page);
+    g_signal_connect(connect_button, "clicked", G_CALLBACK(settings_page_connect), page);
     gtk_box_pack_start(GTK_BOX(actions), cancel_button, TRUE, TRUE, 0);
-    gtk_box_pack_start(GTK_BOX(actions), pair_button, TRUE, TRUE, 0);
-    gtk_box_pack_start(GTK_BOX(actions), save_button, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(actions), connect_button, TRUE, TRUE, 0);
     gtk_widget_show_all(window);
     virtual_keyboard_show_for(page->keyboard, page->relay);
     gtk_window_set_focus(GTK_WINDOW(app->window), GTK_WIDGET(page->relay));
@@ -1693,39 +1593,79 @@ static gboolean async_task_complete(gpointer userdata) {
             }
             break;
         case TASK_PAIR_CLAIM:
-            if (!task->claim || !task->claim->token || !*task->claim->token) {
-                show_error(app, "Pairing не выполнен", task->error);
-                if (app->page_window == task->pair_page) {
-                    GtkWidget *connect = g_object_get_data(G_OBJECT(task->pair_page), "bookrelay-pair-connect");
-                    gtk_widget_set_sensitive(connect, TRUE);
-                }
+            if (!task->claim) {
+                if (app->page_window == task->settings_page) {
+                    SettingsPage *page = g_object_get_data(G_OBJECT(task->settings_page), "bookrelay-settings-page");
+                    gchar *message = g_strdup_printf("Подключение не выполнено: %s", task->error ? task->error->message : "relay не вернул ответ");
+                    gtk_label_set_text(GTK_LABEL(page->feedback), message);
+                    gtk_widget_set_sensitive(g_object_get_data(G_OBJECT(page->window), "bookrelay-settings-connect"), TRUE);
+                    g_free(message);
+                } else show_error(app, "Подключение не выполнено", task->error);
             } else {
+                GError *save_error = NULL;
                 g_free(app->config->relay_url);
                 app->config->relay_url = g_strdup(task->base_url);
                 g_free(app->config->token);
                 app->config->token = g_strdup(task->claim->token);
                 g_free(app->config->kindle_email);
                 app->config->kindle_email = g_strdup(task->claim->kindle_email ? task->claim->kindle_email : "");
-                bookrelay_config_save(app->config, app->config_path, NULL);
-                app->catalog_ready = FALSE;
-                set_status(app, "Kindle привязан · загружаем каталог…");
-                load_categories(app);
+                if (app->page_window == task->settings_page) {
+                    SettingsPage *page = g_object_get_data(G_OBJECT(task->settings_page), "bookrelay-settings-page");
+                    page->claimed = TRUE;
+                    gtk_entry_set_text(page->code, "");
+                }
+                if (!bookrelay_config_save(app->config, app->config_path, &save_error)) {
+                    if (app->page_window == task->settings_page) {
+                        SettingsPage *page = g_object_get_data(G_OBJECT(task->settings_page), "bookrelay-settings-page");
+                        gchar *message = g_strdup_printf("Код принят, но токен не сохранён на Kindle: %s. Проверьте свободное место и повторите без кода.",
+                                                         save_error ? save_error->message : "ошибка записи");
+                        gtk_label_set_text(GTK_LABEL(page->feedback), message);
+                        gtk_widget_set_sensitive(g_object_get_data(G_OBJECT(page->window), "bookrelay-settings-connect"), TRUE);
+                        g_free(message);
+                    } else show_error(app, "Код принят, но подключение не сохранено", save_error);
+                    g_clear_error(&save_error);
+                    break;
+                }
+                if (app->page_window == task->settings_page) {
+                    SettingsPage *page = g_object_get_data(G_OBJECT(task->settings_page), "bookrelay-settings-page");
+                    AsyncTask *update = async_task_new(app, TASK_UPDATE_EMAIL);
+                    gtk_label_set_text(GTK_LABEL(page->feedback), "Код принят. Сохраняем почту Kindle…");
+                    update->base_url = g_strdup(task->base_url);
+                    update->token = g_strdup(task->claim->token);
+                    update->email = g_strdup(task->email);
+                    update->settings_page = page->window;
+                    if (!start_async_task(update)) {
+                        gtk_label_set_text(GTK_LABEL(page->feedback), "Код принят, но не удалось запустить сохранение почты. Нажмите «Подключить» ещё раз.");
+                        gtk_widget_set_sensitive(g_object_get_data(G_OBJECT(page->window), "bookrelay-settings-connect"), TRUE);
+                    }
+                } else load_categories(app);
             }
             break;
         case TASK_UPDATE_EMAIL:
             if (!task->state || !*task->state) {
-                show_error(app, "Почта Kindle не сохранена", task->error);
-                if (app->page_window == task->settings_page)
-                    gtk_widget_set_sensitive(g_object_get_data(G_OBJECT(task->settings_page), "bookrelay-settings-save"), TRUE);
+                if (app->page_window == task->settings_page) {
+                    SettingsPage *page = g_object_get_data(G_OBJECT(task->settings_page), "bookrelay-settings-page");
+                    gchar *message = g_strdup_printf("Код принят, но почта не сохранена: %s. Повторите подключение без кода.", task->error ? task->error->message : "неожиданный ответ relay");
+                    gtk_label_set_text(GTK_LABEL(page->feedback), message);
+                    gtk_widget_set_sensitive(g_object_get_data(G_OBJECT(page->window), "bookrelay-settings-connect"), TRUE);
+                    g_free(message);
+                } else show_error(app, "Почта Kindle не сохранена", task->error);
             } else {
                 g_free(app->config->relay_url);
                 app->config->relay_url = g_strdup(task->base_url);
                 g_free(app->config->kindle_email);
                 app->config->kindle_email = g_strdup(task->state);
-                bookrelay_config_save(app->config, app->config_path, NULL);
-                set_status(app, "Настройки сохранены");
-                if (app->page_window == task->settings_page)
-                    gtk_widget_destroy(task->settings_page);
+                if (!bookrelay_config_save(app->config, app->config_path, &task->error)) {
+                    if (app->page_window == task->settings_page) {
+                        SettingsPage *page = g_object_get_data(G_OBJECT(task->settings_page), "bookrelay-settings-page");
+                        gtk_label_set_text(GTK_LABEL(page->feedback), task->error->message);
+                        gtk_widget_set_sensitive(g_object_get_data(G_OBJECT(page->window), "bookrelay-settings-connect"), TRUE);
+                    }
+                } else {
+                    app->catalog_ready = FALSE;
+                    set_status(app, "Kindle привязан · загружаем каталог…");
+                    load_categories(app);
+                }
             }
             break;
         case TASK_SEND:

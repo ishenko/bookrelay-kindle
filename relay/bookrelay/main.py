@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .delivery import SmtpMailer
 from .jobs import DeliveryService, JobStore
-from .pairing import PairingStore
+from .pairing import PairingStore, utc_now
 from .source.flibusta import FlibustaSource
 
 
@@ -42,12 +42,91 @@ class DeliveryRequest(BaseModel):
 
 
 PAIRING_PAGE = """<!doctype html>
-<html lang='en'><meta charset='utf-8'><title>BookRelay pairing</title>
-<style>body{font:16px system-ui;max-width:34rem;margin:3rem auto;padding:0 1rem}label{display:block;margin:.8rem 0 .25rem}input,button{font:inherit;padding:.6rem;width:100%;box-sizing:border-box}button{margin-top:1rem}</style>
-<h1>BookRelay pairing</h1>
-<p>Enter the owner key and the Kindle Email for the device you are pairing. Each code is tied to one Kindle, so one VPS can serve multiple devices.</p>
-<form id='pair'><label>Kindle Email<input name='kindle_email' type='email' required autocomplete='email' placeholder='your_device@kindle.com'></label><label>Owner key (Dokploy Environment)<input name='admin_key' type='password' required autocomplete='off'></label><button>Generate pairing code</button></form><section id='result' hidden><p>Enter this code on the Kindle:</p><strong id='code'></strong><p id='expires'></p></section>
-<script>document.querySelector('#pair').addEventListener('submit',async e=>{e.preventDefault();const result=document.querySelector('#result');const form=new FormData(e.target);const body={device_id:'web-'+(crypto.randomUUID?crypto.randomUUID():Date.now()),kindle_email:form.get('kindle_email'),admin_key:form.get('admin_key')};const r=await fetch('/v1/pair/start',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});const data=await r.json();result.hidden=false;if(!r.ok){result.textContent=data.detail||'Pairing failed';return;}result.querySelector('#code').textContent=data.code;result.querySelector('#expires').textContent='Code expires at '+data.expires_at;});</script>
+<html lang='ru'>
+<meta charset='utf-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1'>
+<title>BookRelay — подключение Kindle</title>
+<style>
+  body { font: 16px/1.5 system-ui, sans-serif; max-width: 34rem; margin: 3rem auto; padding: 0 1rem; color: #202020; }
+  h1 { line-height: 1.2; }
+  label { display: block; margin: 1rem 0 .3rem; font-weight: 600; }
+  input, button { font: inherit; padding: .75rem; width: 100%; box-sizing: border-box; }
+  input { border: 1px solid #999; border-radius: 4px; }
+  button { margin-top: 1.5rem; background: #202020; color: white; border: 0; border-radius: 4px; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: wait; }
+  #result { margin-top: 2rem; padding: 1.5rem; border: 1px solid #aaa; border-radius: 4px; }
+  #code { display: block; font: 700 2rem ui-monospace, monospace; letter-spacing: .12em; overflow-wrap: anywhere; }
+  progress { width: 100%; height: 1rem; accent-color: #202020; }
+  #error { color: #a22; }
+</style>
+<h1>Подключение Kindle</h1>
+<p>Укажите почту Kindle и ключ владельца сервера. Одноразовый код действует 10 минут.</p>
+<form id='pair'>
+  <label for='kindle-email'>Почта Kindle</label>
+  <input id='kindle-email' name='kindle_email' type='email' required autocomplete='email' placeholder='your_device@kindle.com'>
+  <label for='admin-key'>Ключ владельца (Dokploy Environment)</label>
+  <input id='admin-key' name='admin_key' type='password' required autocomplete='off'>
+  <button type='submit'>Получить код</button>
+</form>
+<p id='error' role='alert' hidden></p>
+<section id='result' aria-live='polite' hidden>
+  <p>Введите этот код на Kindle:</p>
+  <strong id='code'></strong>
+  <p id='remaining'></p>
+  <progress id='lifetime' max='1' value='1' aria-label='Оставшееся время'></progress>
+  <p id='expires'></p>
+</section>
+<script>
+  const form = document.querySelector('#pair');
+  const result = document.querySelector('#result');
+  const error = document.querySelector('#error');
+  const remaining = document.querySelector('#remaining');
+  const progress = document.querySelector('#lifetime');
+  let timer;
+
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    clearInterval(timer);
+    result.hidden = true;
+    error.hidden = true;
+    const button = form.querySelector('button');
+    button.disabled = true;
+    const fields = new FormData(form);
+    const body = {
+      device_id: 'web-' + (crypto.randomUUID ? crypto.randomUUID() : Date.now()),
+      kindle_email: fields.get('kindle_email'),
+      admin_key: fields.get('admin_key'),
+    };
+    try {
+      const response = await fetch('/v1/pair/start', {
+        method: 'POST',
+        headers: {'content-type': 'application/json'},
+        body: JSON.stringify(body),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Не удалось получить код');
+      const lifetimeMs = Date.parse(data.expires_at) - Date.parse(data.server_time);
+      if (!Number.isFinite(lifetimeMs) || lifetimeMs <= 0) throw new Error('Сервер вернул неверное время действия кода');
+      const started = performance.now();
+      result.querySelector('#code').textContent = data.code;
+      result.querySelector('#expires').textContent = 'Истекает: ' + new Date(data.expires_at).toLocaleString();
+      result.hidden = false;
+      const tick = () => {
+        const seconds = Math.max(0, Math.ceil((lifetimeMs - (performance.now() - started)) / 1000));
+        remaining.textContent = seconds ? 'Осталось ' + Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0') : 'Срок действия кода истёк';
+        progress.value = Math.max(0, Math.min(1, (lifetimeMs - (performance.now() - started)) / lifetimeMs));
+        if (!seconds) clearInterval(timer);
+      };
+      tick();
+      timer = setInterval(tick, 1000);
+    } catch (failure) {
+      error.textContent = failure.message || 'Не удалось получить код';
+      error.hidden = false;
+    } finally {
+      button.disabled = false;
+    }
+  });
+</script>
 </html>"""
 KPM_MANIFEST_PATH = Path(__file__).resolve().parents[2] / "kpm" / "manifest.json"
 
@@ -183,7 +262,7 @@ def create_app(db_path: Path | str | None = None, source=None, mailer=None, pair
             result = pairing.start_pairing(payload.device_id, target_email)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return {"code": result.code, "expires_at": result.expires_at, "pairing_url": "/pair"}
+        return {"code": result.code, "expires_at": result.expires_at, "server_time": utc_now().isoformat(), "pairing_url": "/pair"}
 
     @app.post("/v1/pair/claim")
     def pair_claim(request: Request, payload: PairClaimRequest):

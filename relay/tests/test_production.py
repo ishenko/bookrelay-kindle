@@ -1,7 +1,9 @@
+import os
 import tempfile
 import unittest
 from datetime import timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 import httpx
 
@@ -11,6 +13,12 @@ from test_api import FakeMailer, FakeSource
 
 
 class ProductionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_delivery_is_enabled_by_default(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {}, clear=True):
+            app = create_app(Path(tmp) / "relay.db", source=FakeSource(), mailer=FakeMailer(), pairing_admin_key="owner")
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://test") as c:
+                self.assertTrue((await c.get("/healthz")).json()["delivery_enabled"])
+
     async def test_short_install_url_serves_kpm_manifest(self):
         with tempfile.TemporaryDirectory() as tmp:
             app = create_app(Path(tmp) / "relay.db", source=FakeSource(), mailer=FakeMailer())

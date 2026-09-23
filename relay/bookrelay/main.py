@@ -71,7 +71,7 @@ def create_app(db_path: Path | str | None = None, source=None, mailer=None, pair
     admin_key = pairing_admin_key if pairing_admin_key is not None else os.getenv("BOOKRELAY_PAIRING_ADMIN_KEY", "")
     default_email = default_kindle_email if default_kindle_email is not None else os.getenv("BOOKRELAY_DEFAULT_KINDLE_EMAIL", "")
     if delivery_enabled is None:
-        delivery_enabled = os.getenv("BOOKRELAY_DELIVERY_ENABLED", "false").lower() == "true"
+        delivery_enabled = os.getenv("BOOKRELAY_DELIVERY_ENABLED", "true").lower() == "true"
     root = Path(db_path or os.getenv("BOOKRELAY_DB", "./data/relay.sqlite3"))
     source = source or FlibustaSource(os.getenv("BOOKRELAY_SOURCE_URL", "https://flibusta.is"))
     if mailer is None:
@@ -87,7 +87,7 @@ def create_app(db_path: Path | str | None = None, source=None, mailer=None, pair
     jobs = JobStore(root)
     delivery = DeliveryService(jobs, source, mailer)
     limiter = RateLimiter()
-    app = FastAPI(title="BookRelay Relay", version="0.1.6")
+    app = FastAPI(title="BookRelay Relay", version="0.1.7")
     app.state.pairing = pairing
     app.state.source = source
     app.state.delivery = delivery

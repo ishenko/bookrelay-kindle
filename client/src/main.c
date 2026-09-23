@@ -17,6 +17,7 @@ typedef struct {
     BookRelayConfig *config;
     gchar *config_path;
     GtkWidget *window;
+    GtkWidget *page_window;
     GtkWidget *query;
     GtkWidget *categories;
     GtkWidget *results;
@@ -24,11 +25,43 @@ typedef struct {
     GtkWidget *connection;
     GtkWidget *previous_page;
     GtkWidget *next_page;
+    GtkWidget *keyboard;
     guint page;
     guint active_tasks;
     guint category_count;
     GPtrArray *category_ids;
 } App;
+
+typedef struct {
+    GtkWidget *root;
+    GtkEntry *target;
+    gboolean cyrillic;
+    gboolean shift;
+    GPtrArray *letter_buttons;
+} VirtualKeyboard;
+
+typedef struct {
+    App *app;
+    GtkWidget *window;
+    GtkEntry *relay;
+    GtkEntry *code;
+    VirtualKeyboard *keyboard;
+} PairPage;
+
+typedef struct {
+    App *app;
+    GtkWidget *window;
+    GtkEntry *relay;
+    GtkEntry *email;
+    GtkWidget *auto_download;
+    VirtualKeyboard *keyboard;
+} SettingsPage;
+
+typedef struct {
+    App *app;
+    GtkWidget *window;
+    BookRelayBook *book;
+} DetailsPage;
 
 typedef struct { App *app; BookRelayBook *book; } BookRow;
 
@@ -73,6 +106,201 @@ static void set_status(App *app, const gchar *message);
 static void show_error(App *app, const gchar *prefix, GError *error);
 static gboolean async_task_complete(gpointer userdata);
 static void show_details(GtkButton *button, gpointer userdata);
+static void make_touch_target(GtkWidget *widget, gint width, gint height);
+
+static void virtual_keyboard_free(VirtualKeyboard *keyboard) {
+    if (!keyboard) return;
+    if (keyboard->letter_buttons) g_ptr_array_free(keyboard->letter_buttons, TRUE);
+    g_free(keyboard);
+}
+
+static void virtual_keyboard_set_labels(VirtualKeyboard *keyboard) {
+    guint i;
+    if (!keyboard || !keyboard->letter_buttons) return;
+    for (i = 0; i < keyboard->letter_buttons->len; i++) {
+        GtkWidget *button = g_ptr_array_index(keyboard->letter_buttons, i);
+        const gchar *latin = g_object_get_data(G_OBJECT(button), "bookrelay-key-latin");
+        const gchar *cyrillic = g_object_get_data(G_OBJECT(button), "bookrelay-key-cyrillic");
+        const gchar *label = keyboard->cyrillic ? cyrillic : latin;
+        gchar *display = keyboard->shift ? g_utf8_strup(label, -1) : g_strdup(label);
+        gtk_button_set_label(GTK_BUTTON(button), display);
+        g_free(display);
+    }
+}
+
+static void virtual_keyboard_show_for(VirtualKeyboard *keyboard, GtkEntry *entry) {
+    if (!keyboard || !entry) return;
+    keyboard->target = entry;
+    gtk_widget_show_all(keyboard->root);
+    virtual_keyboard_set_labels(keyboard);
+}
+
+static gboolean virtual_keyboard_focus_in(GtkWidget *widget, GdkEventFocus *event, gpointer userdata) {
+    VirtualKeyboard *keyboard = userdata;
+    virtual_keyboard_show_for(keyboard, GTK_ENTRY(widget));
+    return FALSE;
+}
+
+static void virtual_keyboard_bind(VirtualKeyboard *keyboard, GtkEntry *entry) {
+    if (!keyboard || !entry) return;
+    g_signal_connect(entry, "focus-in-event", G_CALLBACK(virtual_keyboard_focus_in), keyboard);
+}
+
+static void virtual_keyboard_insert(VirtualKeyboard *keyboard, const gchar *value) {
+    gint position;
+    gchar *text;
+    if (!keyboard || !keyboard->target || !value) return;
+    position = gtk_editable_get_position(GTK_EDITABLE(keyboard->target));
+    text = g_strdup(value);
+    if (keyboard->shift && g_utf8_validate(text, -1, NULL)) {
+        gchar *upper = g_utf8_strup(text, -1);
+        g_free(text);
+        text = upper;
+    }
+    gtk_editable_insert_text(GTK_EDITABLE(keyboard->target), text, -1, &position);
+    gtk_editable_set_position(GTK_EDITABLE(keyboard->target), position);
+    g_free(text);
+}
+
+static void virtual_keyboard_backspace(VirtualKeyboard *keyboard) {
+    gint position;
+    gint selection_start;
+    gint selection_end;
+    if (!keyboard || !keyboard->target) return;
+    if (gtk_editable_get_selection_bounds(GTK_EDITABLE(keyboard->target), &selection_start, &selection_end)) {
+        gtk_editable_delete_text(GTK_EDITABLE(keyboard->target), selection_start, selection_end);
+        gtk_editable_set_position(GTK_EDITABLE(keyboard->target), selection_start);
+        return;
+    }
+    position = gtk_editable_get_position(GTK_EDITABLE(keyboard->target));
+    if (position > 0) {
+        gtk_editable_delete_text(GTK_EDITABLE(keyboard->target), position - 1, position);
+        gtk_editable_set_position(GTK_EDITABLE(keyboard->target), position - 1);
+    }
+}
+
+static void virtual_keyboard_clicked(GtkButton *button, gpointer userdata) {
+    VirtualKeyboard *keyboard = userdata;
+    const gchar *key = g_object_get_data(G_OBJECT(button), "bookrelay-key");
+    if (g_strcmp0(key, "backspace") == 0) {
+        virtual_keyboard_backspace(keyboard);
+    } else if (g_strcmp0(key, "space") == 0) {
+        virtual_keyboard_insert(keyboard, " ");
+    } else if (g_strcmp0(key, "shift") == 0) {
+        keyboard->shift = !keyboard->shift;
+        virtual_keyboard_set_labels(keyboard);
+    } else if (g_strcmp0(key, "language") == 0) {
+        keyboard->cyrillic = !keyboard->cyrillic;
+        keyboard->shift = FALSE;
+        gtk_button_set_label(button, keyboard->cyrillic ? "EN" : "РУС");
+        virtual_keyboard_set_labels(keyboard);
+    } else if (g_strcmp0(key, "done") == 0) {
+        gtk_widget_hide(keyboard->root);
+    } else if (g_strcmp0(key, "enter") == 0) {
+        if (keyboard->target) g_signal_emit_by_name(keyboard->target, "activate");
+        gtk_widget_hide(keyboard->root);
+    } else {
+        virtual_keyboard_insert(keyboard, key);
+        if (keyboard->shift) {
+            keyboard->shift = FALSE;
+            virtual_keyboard_set_labels(keyboard);
+        }
+    }
+}
+
+static GtkWidget *virtual_keyboard_button(VirtualKeyboard *keyboard, const gchar *label, const gchar *key) {
+    GtkWidget *button = gtk_button_new_with_label(label);
+    make_touch_target(button, 44, 42);
+    gtk_button_set_relief(GTK_BUTTON(button), GTK_RELIEF_NORMAL);
+    g_object_set_data(G_OBJECT(button), "bookrelay-key", (gpointer)key);
+    g_signal_connect(button, "clicked", G_CALLBACK(virtual_keyboard_clicked), keyboard);
+    return button;
+}
+
+static GtkWidget *virtual_keyboard_letter(VirtualKeyboard *keyboard, const gchar *latin, const gchar *cyrillic) {
+    GtkWidget *button = virtual_keyboard_button(keyboard, latin, latin);
+    g_object_set_data(G_OBJECT(button), "bookrelay-key-latin", (gpointer)latin);
+    g_object_set_data(G_OBJECT(button), "bookrelay-key-cyrillic", (gpointer)cyrillic);
+    g_ptr_array_add(keyboard->letter_buttons, button);
+    return button;
+}
+
+static void virtual_keyboard_pack_row(GtkWidget *root, GtkWidget *row) {
+    gtk_box_pack_start(GTK_BOX(root), row, FALSE, FALSE, 1);
+}
+
+static VirtualKeyboard *virtual_keyboard_new(GtkWidget *parent, GtkEntry *initial_target) {
+    static const gchar *latin_row_1[] = {"q", "w", "e", "r", "t", "y", "u", "i", "o", "p"};
+    static const gchar *cyrillic_row_1[] = {"й", "ц", "у", "к", "е", "н", "г", "ш", "щ", "з"};
+    static const gchar *latin_row_2[] = {"a", "s", "d", "f", "g", "h", "j", "k", "l"};
+    static const gchar *cyrillic_row_2[] = {"ф", "ы", "в", "а", "п", "р", "о", "л", "д"};
+    static const gchar *latin_row_3[] = {"z", "x", "c", "v", "b", "n", "m"};
+    static const gchar *cyrillic_row_3[] = {"я", "ч", "с", "м", "и", "т", "ь"};
+    VirtualKeyboard *keyboard = g_new0(VirtualKeyboard, 1);
+    GtkWidget *row;
+    GtkWidget *button;
+    guint i;
+    keyboard->root = gtk_vbox_new(FALSE, 1);
+    keyboard->target = initial_target;
+    keyboard->letter_buttons = g_ptr_array_new();
+    g_object_set_data_full(G_OBJECT(keyboard->root), "bookrelay-keyboard-state", keyboard, (GDestroyNotify)virtual_keyboard_free);
+    gtk_widget_set_no_show_all(keyboard->root, TRUE);
+    gtk_container_set_border_width(GTK_CONTAINER(keyboard->root), 2);
+
+    row = gtk_hbox_new(TRUE, 1);
+    for (i = 0; i < 10; i++) {
+        button = virtual_keyboard_letter(keyboard, latin_row_1[i], cyrillic_row_1[i]);
+        gtk_box_pack_start(GTK_BOX(row), button, TRUE, TRUE, 0);
+    }
+    virtual_keyboard_pack_row(keyboard->root, row);
+
+    row = gtk_hbox_new(TRUE, 1);
+    for (i = 0; i < 9; i++) {
+        button = virtual_keyboard_letter(keyboard, latin_row_2[i], cyrillic_row_2[i]);
+        gtk_box_pack_start(GTK_BOX(row), button, TRUE, TRUE, 0);
+    }
+    virtual_keyboard_pack_row(keyboard->root, row);
+
+    row = gtk_hbox_new(TRUE, 1);
+    for (i = 0; i < 7; i++) {
+        button = virtual_keyboard_letter(keyboard, latin_row_3[i], cyrillic_row_3[i]);
+        gtk_box_pack_start(GTK_BOX(row), button, TRUE, TRUE, 0);
+    }
+    button = virtual_keyboard_button(keyboard, ".", ".");
+    gtk_box_pack_start(GTK_BOX(row), button, TRUE, TRUE, 0);
+    button = virtual_keyboard_button(keyboard, "@", "@");
+    gtk_box_pack_start(GTK_BOX(row), button, TRUE, TRUE, 0);
+    button = virtual_keyboard_button(keyboard, "/", "/");
+    gtk_box_pack_start(GTK_BOX(row), button, TRUE, TRUE, 0);
+    virtual_keyboard_pack_row(keyboard->root, row);
+
+    row = gtk_hbox_new(TRUE, 1);
+    for (i = 0; i < 10; i++) {
+        gchar label[2];
+        label[0] = (gchar)('0' + i);
+        label[1] = 0;
+        button = virtual_keyboard_button(keyboard, label, g_strdup(label));
+        gtk_box_pack_start(GTK_BOX(row), button, TRUE, TRUE, 0);
+    }
+    virtual_keyboard_pack_row(keyboard->root, row);
+
+    row = gtk_hbox_new(TRUE, 1);
+    button = virtual_keyboard_button(keyboard, "РУС", "language");
+    gtk_box_pack_start(GTK_BOX(row), button, TRUE, TRUE, 0);
+    button = virtual_keyboard_button(keyboard, "Shift", "shift");
+    gtk_box_pack_start(GTK_BOX(row), button, TRUE, TRUE, 0);
+    button = virtual_keyboard_button(keyboard, "Пробел", "space");
+    gtk_box_pack_start(GTK_BOX(row), button, TRUE, TRUE, 0);
+    button = virtual_keyboard_button(keyboard, "⌫", "backspace");
+    gtk_box_pack_start(GTK_BOX(row), button, TRUE, TRUE, 0);
+    button = virtual_keyboard_button(keyboard, "Готово", "done");
+    gtk_box_pack_start(GTK_BOX(row), button, TRUE, TRUE, 0);
+    virtual_keyboard_pack_row(keyboard->root, row);
+
+    if (parent) gtk_box_pack_start(GTK_BOX(parent), keyboard->root, FALSE, FALSE, 2);
+    virtual_keyboard_bind(keyboard, initial_target);
+    return keyboard;
+}
 
 static void set_kindle_dialog_role(GtkWidget *dialog) {
     gtk_window_set_title(GTK_WINDOW(dialog), KINDLE_DIALOG_WINDOW_TITLE);
@@ -87,6 +315,55 @@ static void set_large_font(GtkWidget *widget, const gchar *description) {
 static void make_touch_target(GtkWidget *widget, gint width, gint height) {
     gtk_widget_set_size_request(widget, width, height);
     set_large_font(widget, "Sans 17");
+}
+
+static void page_window_destroyed(GtkWidget *window, gpointer userdata) {
+    App *app = userdata;
+    if (app && app->page_window == window) app->page_window = NULL;
+}
+
+static GtkWidget *new_kindle_page(App *app, const gchar *heading, GtkWidget **body_out, GtkWidget **actions_out) {
+    GtkWidget *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    GtkWidget *root = gtk_vbox_new(FALSE, 8);
+    GtkWidget *header = gtk_hbox_new(FALSE, 8);
+    GtkWidget *heading_label = gtk_label_new(heading);
+    GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
+    GtkWidget *body = gtk_vbox_new(FALSE, 10);
+    GtkWidget *actions = gtk_hbox_new(TRUE, 8);
+
+    if (app->page_window) {
+        gtk_window_present(GTK_WINDOW(app->page_window));
+        return NULL;
+    }
+
+    gtk_window_set_title(GTK_WINDOW(window), KINDLE_APP_WINDOW_TITLE);
+    gtk_window_set_default_size(GTK_WINDOW(window), 758, 900);
+    gtk_window_set_position(GTK_WINDOW(window), GTK_WIN_POS_CENTER);
+    gtk_window_set_resizable(GTK_WINDOW(window), TRUE);
+    gtk_container_set_border_width(GTK_CONTAINER(root), 12);
+    set_large_font(heading_label, "Sans Bold 22");
+    gtk_misc_set_alignment(GTK_MISC(heading_label), 0, 0.5);
+    gtk_box_pack_start(GTK_BOX(header), heading_label, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(root), header, FALSE, FALSE, 0);
+
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(scroll), GTK_SHADOW_IN);
+    gtk_container_set_border_width(GTK_CONTAINER(body), 8);
+    gtk_scrolled_window_add_with_viewport(GTK_SCROLLED_WINDOW(scroll), body);
+    gtk_box_pack_start(GTK_BOX(root), scroll, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(root), actions, FALSE, FALSE, 0);
+    gtk_container_add(GTK_CONTAINER(window), root);
+    g_signal_connect(window, "destroy", G_CALLBACK(page_window_destroyed), app);
+    app->page_window = window;
+    if (body_out) *body_out = body;
+    if (actions_out) *actions_out = actions;
+    return window;
+}
+
+static GtkWidget *page_button(const gchar *label) {
+    GtkWidget *button = gtk_button_new_with_label(label);
+    make_touch_target(button, 180, 54);
+    return button;
 }
 
 static gboolean focus_widget_idle(gpointer userdata) {
@@ -252,8 +529,8 @@ static GtkWidget *make_cover(App *app, BookRelayBook *book) {
     GtkWidget *box = gtk_vbox_new(FALSE, 2);
     GtkWidget *image = gtk_image_new();
     GtkWidget *placeholder = gtk_label_new("Обложка недоступна");
-    gtk_widget_set_size_request(image, 150, 205);
-    gtk_widget_set_size_request(placeholder, 150, 205);
+    gtk_widget_set_size_request(image, 104, 146);
+    gtk_widget_set_size_request(placeholder, 104, 146);
     /* render_books() calls gtk_widget_show_all() after cards are built. Keep
      * the mutually exclusive placeholder from being re-shown by that call. */
     gtk_widget_set_no_show_all(placeholder, TRUE);
@@ -263,8 +540,8 @@ static GtkWidget *make_cover(App *app, BookRelayBook *book) {
     gtk_box_pack_start(GTK_BOX(box), image, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(box), placeholder, TRUE, TRUE, 0);
     gtk_container_add(GTK_CONTAINER(frame), box);
-    gtk_widget_set_size_request(frame, 166, 235);
-    if (g_file_test(path, G_FILE_TEST_EXISTS)) pixbuf = gdk_pixbuf_new_from_file_at_scale(path, 150, 205, TRUE, NULL);
+    gtk_widget_set_size_request(frame, 116, 162);
+    if (g_file_test(path, G_FILE_TEST_EXISTS)) pixbuf = gdk_pixbuf_new_from_file_at_scale(path, 104, 146, TRUE, NULL);
     if (pixbuf) {
         gtk_image_set_from_pixbuf(GTK_IMAGE(image), pixbuf);
         gtk_widget_hide(placeholder);
@@ -300,10 +577,13 @@ static void render_empty_state(App *app, const gchar *message) {
     gtk_label_set_line_wrap(GTK_LABEL(hint), TRUE);
     gtk_misc_set_alignment(GTK_MISC(title), 0.5, 0.5);
     gtk_misc_set_alignment(GTK_MISC(hint), 0.5, 0.5);
-    gtk_box_pack_start(GTK_BOX(box), title, FALSE, FALSE, 16);
-    gtk_box_pack_start(GTK_BOX(box), hint, FALSE, FALSE, 8);
-    gtk_box_pack_start(GTK_BOX(app->results), box, FALSE, FALSE, 32);
+    gtk_box_pack_start(GTK_BOX(box), title, FALSE, FALSE, 18);
+    gtk_box_pack_start(GTK_BOX(box), hint, FALSE, FALSE, 4);
+    gtk_container_set_border_width(GTK_CONTAINER(box), 20);
+    gtk_box_pack_start(GTK_BOX(app->results), box, FALSE, FALSE, 8);
     gtk_widget_show_all(app->results);
+    gtk_widget_queue_resize(app->results);
+    gtk_widget_queue_draw(app->results);
 }
 
 static void render_books(App *app, GPtrArray *books) {
@@ -317,11 +597,11 @@ static void render_books(App *app, GPtrArray *books) {
         BookRelayBook *book = g_ptr_array_index(books, i);
         GtkWidget *frame = gtk_frame_new(NULL);
         GtkWidget *row = gtk_hbox_new(FALSE, 14);
-        GtkWidget *text_box = gtk_vbox_new(FALSE, 8);
+        GtkWidget *text_box = gtk_vbox_new(FALSE, 4);
         GtkWidget *title = gtk_label_new(book->title && *book->title ? book->title : "Без названия");
         GtkWidget *author = gtk_label_new(book->author && *book->author ? book->author : "Автор не указан");
         GtkWidget *meta = gtk_label_new("Книга");
-        GtkWidget *button = gtk_button_new_with_label("Открыть карточку");
+        GtkWidget *button = gtk_button_new_with_label("Подробнее");
         BookRow *data = g_new0(BookRow, 1);
         data->app = app;
         data->book = bookrelay_book_copy(book);
@@ -332,60 +612,92 @@ static void render_books(App *app, GPtrArray *books) {
         gtk_misc_set_alignment(GTK_MISC(meta), 0, 0.5);
         gtk_label_set_line_wrap(GTK_LABEL(title), TRUE);
         gtk_label_set_line_wrap(GTK_LABEL(author), TRUE);
-        set_large_font(title, "Sans Bold 20");
-        set_large_font(author, "Sans 17");
-        set_large_font(meta, "Sans 14");
-        make_touch_target(button, 260, 58);
-        gtk_box_pack_start(GTK_BOX(row), make_cover(app, book), FALSE, FALSE, 8);
+        set_large_font(title, "Sans Bold 18");
+        set_large_font(author, "Sans 15");
+        set_large_font(meta, "Sans 13");
+        make_touch_target(button, 170, 48);
+        gtk_box_pack_start(GTK_BOX(row), make_cover(app, book), FALSE, FALSE, 4);
         gtk_box_pack_start(GTK_BOX(text_box), title, FALSE, FALSE, 4);
         gtk_box_pack_start(GTK_BOX(text_box), author, FALSE, FALSE, 4);
         gtk_box_pack_start(GTK_BOX(text_box), meta, FALSE, FALSE, 4);
-        gtk_box_pack_end(GTK_BOX(text_box), button, FALSE, FALSE, 4);
-        gtk_box_pack_start(GTK_BOX(row), text_box, TRUE, TRUE, 10);
-        gtk_container_set_border_width(GTK_CONTAINER(frame), 10);
+        gtk_box_pack_end(GTK_BOX(text_box), button, FALSE, FALSE, 2);
+        gtk_box_pack_start(GTK_BOX(row), text_box, TRUE, TRUE, 5);
+        gtk_container_set_border_width(GTK_CONTAINER(frame), 6);
         gtk_container_add(GTK_CONTAINER(frame), row);
-        gtk_box_pack_start(GTK_BOX(app->results), frame, FALSE, FALSE, 10);
+        gtk_box_pack_start(GTK_BOX(app->results), frame, FALSE, FALSE, 6);
     }
     gtk_widget_show_all(app->results);
+    gtk_widget_queue_resize(app->results);
+    gtk_widget_queue_draw(app->results);
+}
+
+static void details_page_close(GtkButton *button, gpointer userdata) {
+    DetailsPage *page = userdata;
+    gtk_widget_destroy(page->window);
+}
+
+static void details_page_send(GtkButton *button, gpointer userdata) {
+    DetailsPage *page = userdata;
+    App *app = page->app;
+    if (!app->config->token || !*app->config->token) {
+        set_status(app, "Сначала выполните pairing в настройках");
+        gtk_widget_destroy(page->window);
+        return;
+    }
+    {
+        AsyncTask *task = async_task_new(app, TASK_SEND);
+        set_status(app, "Отправляем книгу на Kindle…");
+        copy_common_task_fields(task, app);
+        task->book_id = g_strdup(page->book->id);
+        task->title = g_strdup(page->book->title);
+        start_async_task(task);
+    }
+    gtk_widget_destroy(page->window);
+}
+
+static void details_page_free(DetailsPage *page) {
+    if (!page) return;
+    bookrelay_book_free(page->book);
+    g_free(page);
 }
 
 static void show_details(GtkButton *button, gpointer userdata) {
     BookRow *row = userdata;
-    GtkWidget *dialog = gtk_dialog_new_with_buttons(row->book->title, GTK_WINDOW(row->app->window), GTK_DIALOG_MODAL, "Закрыть", GTK_RESPONSE_CLOSE, "Скачать на Kindle", GTK_RESPONSE_ACCEPT, NULL);
-    GtkWidget *content;
-    GtkWidget *box;
-    GtkWidget *label;
+    GtkWidget *body;
+    GtkWidget *actions;
+    GtkWidget *window;
     GtkWidget *cover;
+    GtkWidget *label;
+    GtkWidget *close_button;
+    GtkWidget *send_button;
+    DetailsPage *page;
     gchar *text;
-    set_kindle_dialog_role(dialog);
-    gtk_window_set_default_size(GTK_WINDOW(dialog), 700, 760);
-    content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
-    box = gtk_vbox_new(FALSE, 12);
-    cover = make_cover(row->app, row->book);
+
+    window = new_kindle_page(row->app, "Карточка книги", &body, &actions);
+    if (!window) return;
+    page = g_new0(DetailsPage, 1);
+    page->app = row->app;
+    page->window = window;
+    page->book = bookrelay_book_copy(row->book);
+    g_object_set_data_full(G_OBJECT(window), "bookrelay-details-page", page, (GDestroyNotify)details_page_free);
+
+    cover = make_cover(row->app, page->book);
     label = gtk_label_new(NULL);
-    text = g_strdup_printf("%s\n\nАвтор: %s\n\n%s", row->book->title, row->book->author, row->book->description && *row->book->description ? row->book->description : "Описание отсутствует.");
+    text = g_strdup_printf("%s\n\nАвтор: %s\n\n%s", page->book->title, page->book->author, page->book->description && *page->book->description ? page->book->description : "Описание отсутствует.");
     gtk_label_set_text(GTK_LABEL(label), text);
     gtk_label_set_line_wrap(GTK_LABEL(label), TRUE);
     gtk_misc_set_alignment(GTK_MISC(label), 0, 0);
-    set_large_font(label, "Sans 17");
-    gtk_box_pack_start(GTK_BOX(box), cover, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(box), label, TRUE, TRUE, 12);
-    gtk_container_set_border_width(GTK_CONTAINER(content), 18);
-    gtk_box_pack_start(GTK_BOX(content), box, TRUE, TRUE, 0);
-    gtk_widget_show_all(dialog);
-    if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
-        if (!row->app->config->token || !*row->app->config->token) {
-            set_status(row->app, "Сначала выполните pairing в настройках");
-        } else {
-            AsyncTask *task = async_task_new(row->app, TASK_SEND);
-            set_status(row->app, "Отправляем книгу на Kindle…");
-            copy_common_task_fields(task, row->app);
-            task->book_id = g_strdup(row->book->id);
-            task->title = g_strdup(row->book->title);
-            start_async_task(task);
-        }
-    }
-    gtk_widget_destroy(dialog);
+    set_large_font(label, "Sans 18");
+    gtk_box_pack_start(GTK_BOX(body), cover, FALSE, FALSE, 4);
+    gtk_box_pack_start(GTK_BOX(body), label, FALSE, FALSE, 12);
+
+    close_button = page_button("Назад");
+    send_button = page_button("Скачать на Kindle");
+    g_signal_connect(close_button, "clicked", G_CALLBACK(details_page_close), page);
+    g_signal_connect(send_button, "clicked", G_CALLBACK(details_page_send), page);
+    gtk_box_pack_start(GTK_BOX(actions), close_button, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(actions), send_button, TRUE, TRUE, 0);
+    gtk_widget_show_all(window);
     g_free(text);
 }
 
@@ -451,62 +763,93 @@ static void load_categories(App *app) {
     start_async_task(task);
 }
 
+static void pair_page_cancel(GtkButton *button, gpointer userdata) {
+    PairPage *page = userdata;
+    gtk_widget_destroy(page->window);
+}
+
+static void pair_page_connect(GtkButton *button, gpointer userdata) {
+    PairPage *page = userdata;
+    App *app = page->app;
+    const gchar *pairing_code = gtk_entry_get_text(page->code);
+    gchar *relay_url = trim_relay_url(gtk_entry_get_text(page->relay));
+
+    if (!valid_relay_url(relay_url)) {
+        set_status(app, "Relay URL должен начинаться с http:// или https://");
+        gtk_window_set_focus(GTK_WINDOW(page->window), GTK_WIDGET(page->relay));
+        virtual_keyboard_show_for(page->keyboard, page->relay);
+        g_free(relay_url);
+        return;
+    }
+    if (!pairing_code || !*pairing_code) {
+        set_status(app, "Введите одноразовый код");
+        gtk_window_set_focus(GTK_WINDOW(page->window), GTK_WIDGET(page->code));
+        virtual_keyboard_show_for(page->keyboard, page->code);
+        g_free(relay_url);
+        return;
+    }
+    {
+        AsyncTask *task = async_task_new(app, TASK_PAIR_CLAIM);
+        task->base_url = g_strdup(relay_url);
+        task->code = g_strdup(pairing_code);
+        set_status(app, "Подключаем Kindle…");
+        start_async_task(task);
+    }
+    g_free(relay_url);
+    gtk_widget_destroy(page->window);
+}
+
 static void pair_clicked(GtkButton *button, gpointer userdata) {
     App *app = userdata;
-    GtkWidget *dialog = gtk_dialog_new_with_buttons("Подключение Kindle", GTK_WINDOW(app->window), GTK_DIALOG_MODAL, "Отмена", GTK_RESPONSE_CANCEL, "Подключить", GTK_RESPONSE_ACCEPT, NULL);
-    GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
-    GtkWidget *box = gtk_vbox_new(FALSE, 14);
-    GtkWidget *intro = gtk_label_new("Введите адрес relay и одноразовый код с pairing-страницы. После подключения код больше не понадобится.");
-    GtkWidget *relay = gtk_entry_new();
-    GtkWidget *code = gtk_entry_new();
-    GtkWidget *relay_label = gtk_label_new("Relay URL");
-    GtkWidget *code_label = gtk_label_new("Одноразовый код");
-    gchar *initial_url;
-    set_kindle_dialog_role(dialog);
-    gtk_window_set_default_size(GTK_WINDOW(dialog), 700, 560);
-    gtk_dialog_set_default_response(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT);
+    GtkWidget *body;
+    GtkWidget *actions;
+    GtkWidget *window;
+    GtkWidget *intro;
+    GtkWidget *relay_label;
+    GtkWidget *code_label;
+    GtkWidget *connect_button;
+    GtkWidget *cancel_button;
+    PairPage *page;
+
+    window = new_kindle_page(app, "Подключение Kindle", &body, &actions);
+    if (!window) return;
+    page = g_new0(PairPage, 1);
+    page->app = app;
+    page->window = window;
+    page->relay = GTK_ENTRY(gtk_entry_new());
+    page->code = GTK_ENTRY(gtk_entry_new());
+    g_object_set_data_full(G_OBJECT(window), "bookrelay-pair-page", page, g_free);
+
+    intro = gtk_label_new("Введите адрес relay и одноразовый код. После подключения код больше не понадобится.");
+    relay_label = gtk_label_new("Relay URL");
+    code_label = gtk_label_new("Одноразовый код");
     gtk_label_set_line_wrap(GTK_LABEL(intro), TRUE);
     gtk_misc_set_alignment(GTK_MISC(intro), 0, 0.5);
     set_large_font(intro, "Sans 17");
-    set_large_font(relay_label, "Sans Bold 17");
-    set_large_font(code_label, "Sans Bold 17");
-    set_large_font(relay, "Sans 20");
-    set_large_font(code, "Sans 20");
-    initial_url = g_strdup(app->config->relay_url);
-    gtk_entry_set_text(GTK_ENTRY(relay), initial_url);
-    gtk_entry_set_width_chars(GTK_ENTRY(relay), 44);
-    gtk_entry_set_max_length(GTK_ENTRY(code), 32);
-    gtk_entry_set_width_chars(GTK_ENTRY(code), 24);
-    gtk_entry_set_activates_default(GTK_ENTRY(code), TRUE);
-    gtk_box_pack_start(GTK_BOX(box), intro, FALSE, FALSE, 2);
-    gtk_box_pack_start(GTK_BOX(box), relay_label, FALSE, FALSE, 2);
-    gtk_box_pack_start(GTK_BOX(box), relay, FALSE, FALSE, 2);
-    gtk_box_pack_start(GTK_BOX(box), code_label, FALSE, FALSE, 2);
-    gtk_box_pack_start(GTK_BOX(box), code, FALSE, FALSE, 2);
-    gtk_container_set_border_width(GTK_CONTAINER(content), 22);
-    gtk_box_pack_start(GTK_BOX(content), box, TRUE, TRUE, 0);
-    gtk_widget_show_all(dialog);
-    gtk_window_set_focus(GTK_WINDOW(dialog), relay);
-    g_idle_add(focus_widget_idle, relay);
-    if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
-        const gchar *pairing_code = gtk_entry_get_text(GTK_ENTRY(code));
-        gchar *relay_url = trim_relay_url(gtk_entry_get_text(GTK_ENTRY(relay)));
-        if (!valid_relay_url(relay_url)) {
-            set_status(app, "Relay URL должен начинаться с http:// или https://");
-        } else if (!pairing_code || !*pairing_code) {
-            set_status(app, "Введите одноразовый код");
-            gtk_window_set_focus(GTK_WINDOW(dialog), code);
-        } else {
-            AsyncTask *task = async_task_new(app, TASK_PAIR_CLAIM);
-            task->base_url = g_strdup(relay_url);
-            task->code = g_strdup(pairing_code);
-            set_status(app, "Подключаем Kindle…");
-            start_async_task(task);
-        }
-        g_free(relay_url);
-    }
-    gtk_widget_destroy(dialog);
-    g_free(initial_url);
+    set_large_font(relay_label, "Sans Bold 18");
+    set_large_font(code_label, "Sans Bold 18");
+    set_large_font(GTK_WIDGET(page->relay), "Sans 20");
+    set_large_font(GTK_WIDGET(page->code), "Sans 20");
+    gtk_entry_set_text(page->relay, app->config->relay_url ? app->config->relay_url : "");
+    gtk_entry_set_max_length(page->code, 32);
+    gtk_box_pack_start(GTK_BOX(body), intro, FALSE, FALSE, 4);
+    gtk_box_pack_start(GTK_BOX(body), relay_label, FALSE, FALSE, 4);
+    gtk_box_pack_start(GTK_BOX(body), GTK_WIDGET(page->relay), FALSE, FALSE, 4);
+    gtk_box_pack_start(GTK_BOX(body), code_label, FALSE, FALSE, 4);
+    gtk_box_pack_start(GTK_BOX(body), GTK_WIDGET(page->code), FALSE, FALSE, 4);
+    page->keyboard = virtual_keyboard_new(body, page->relay);
+    virtual_keyboard_bind(page->keyboard, page->code);
+
+    cancel_button = page_button("Отмена");
+    connect_button = page_button("Подключить");
+    g_signal_connect(cancel_button, "clicked", G_CALLBACK(pair_page_cancel), page);
+    g_signal_connect(connect_button, "clicked", G_CALLBACK(pair_page_connect), page);
+    gtk_box_pack_start(GTK_BOX(actions), cancel_button, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(actions), connect_button, TRUE, TRUE, 0);
+    gtk_widget_show_all(window);
+    virtual_keyboard_show_for(page->keyboard, page->relay);
+    gtk_window_set_focus(GTK_WINDOW(window), GTK_WIDGET(page->relay));
+    g_idle_add(focus_widget_idle, page->relay);
 }
 
 static gboolean poll_delivery(gpointer userdata) {
@@ -522,55 +865,86 @@ static gboolean poll_delivery(gpointer userdata) {
     return TRUE;
 }
 
+static void settings_page_cancel(GtkButton *button, gpointer userdata) {
+    SettingsPage *page = userdata;
+    gtk_widget_destroy(page->window);
+}
+
+static void settings_page_save(GtkButton *button, gpointer userdata) {
+    SettingsPage *page = userdata;
+    App *app = page->app;
+    gchar *relay_url = trim_relay_url(gtk_entry_get_text(page->relay));
+    if (!valid_relay_url(relay_url)) {
+        set_status(app, "Relay URL должен начинаться с http:// или https://");
+        gtk_window_set_focus(GTK_WINDOW(page->window), GTK_WIDGET(page->relay));
+        virtual_keyboard_show_for(page->keyboard, page->relay);
+        g_free(relay_url);
+        return;
+    }
+    g_free(app->config->relay_url);
+    app->config->relay_url = relay_url;
+    app->config->auto_download = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(page->auto_download));
+    bookrelay_config_save(app->config, app->config_path, NULL);
+    set_status(app, "Настройки сохранены");
+    update_connection(app);
+    gtk_widget_destroy(page->window);
+}
+
 static void settings_clicked(GtkButton *button, gpointer userdata) {
     App *app = userdata;
-    GtkWidget *dialog = gtk_dialog_new_with_buttons("Настройки", GTK_WINDOW(app->window), GTK_DIALOG_MODAL, "Отмена", GTK_RESPONSE_CANCEL, "Сохранить", GTK_RESPONSE_ACCEPT, NULL);
-    GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
-    GtkWidget *box = gtk_vbox_new(FALSE, 12);
-    GtkWidget *relay_label = gtk_label_new("Relay URL");
-    GtkWidget *relay = gtk_entry_new();
-    GtkWidget *email_label = gtk_label_new("Kindle Email");
-    GtkWidget *email = gtk_entry_new();
-    GtkWidget *auto_download = gtk_check_button_new_with_label("Автоматически отправлять новые задания");
-    set_kindle_dialog_role(dialog);
-    gtk_window_set_default_size(GTK_WINDOW(dialog), 700, 520);
-    gtk_dialog_set_default_response(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT);
-    set_large_font(relay_label, "Sans Bold 17");
-    set_large_font(email_label, "Sans Bold 17");
-    set_large_font(relay, "Sans 20");
-    set_large_font(email, "Sans 20");
-    set_large_font(auto_download, "Sans 17");
-    gtk_entry_set_text(GTK_ENTRY(relay), app->config->relay_url);
-    gtk_entry_set_width_chars(GTK_ENTRY(relay), 44);
-    gtk_entry_set_text(GTK_ENTRY(email), app->config->kindle_email ? app->config->kindle_email : "");
-    gtk_entry_set_width_chars(GTK_ENTRY(email), 36);
-    gtk_widget_set_sensitive(email, FALSE);
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(auto_download), app->config->auto_download);
-    gtk_box_pack_start(GTK_BOX(box), relay_label, FALSE, FALSE, 2);
-    gtk_box_pack_start(GTK_BOX(box), relay, FALSE, FALSE, 2);
-    gtk_box_pack_start(GTK_BOX(box), email_label, FALSE, FALSE, 2);
-    gtk_box_pack_start(GTK_BOX(box), email, FALSE, FALSE, 2);
-    gtk_box_pack_start(GTK_BOX(box), auto_download, FALSE, FALSE, 12);
-    gtk_container_set_border_width(GTK_CONTAINER(content), 22);
-    gtk_box_pack_start(GTK_BOX(content), box, TRUE, TRUE, 0);
-    gtk_widget_show_all(dialog);
-    gtk_window_set_focus(GTK_WINDOW(dialog), relay);
-    g_idle_add(focus_widget_idle, relay);
-    if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
-        gchar *relay_url = trim_relay_url(gtk_entry_get_text(GTK_ENTRY(relay)));
-        if (!valid_relay_url(relay_url)) {
-            set_status(app, "Relay URL должен начинаться с http:// или https://");
-            g_free(relay_url);
-        } else {
-            g_free(app->config->relay_url);
-            app->config->relay_url = relay_url;
-            app->config->auto_download = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(auto_download));
-            bookrelay_config_save(app->config, app->config_path, NULL);
-            set_status(app, "Настройки сохранены");
-            update_connection(app);
-        }
-    }
-    gtk_widget_destroy(dialog);
+    GtkWidget *body;
+    GtkWidget *actions;
+    GtkWidget *window;
+    GtkWidget *relay_label;
+    GtkWidget *email_label;
+    GtkWidget *hint;
+    GtkWidget *cancel_button;
+    GtkWidget *save_button;
+    SettingsPage *page;
+
+    window = new_kindle_page(app, "Настройки", &body, &actions);
+    if (!window) return;
+    page = g_new0(SettingsPage, 1);
+    page->app = app;
+    page->window = window;
+    page->relay = GTK_ENTRY(gtk_entry_new());
+    page->email = GTK_ENTRY(gtk_entry_new());
+    page->auto_download = gtk_check_button_new_with_label("Автоматически отправлять новые задания");
+    g_object_set_data_full(G_OBJECT(window), "bookrelay-settings-page", page, g_free);
+
+    relay_label = gtk_label_new("Relay URL");
+    email_label = gtk_label_new("Kindle Email (из pairing)");
+    hint = gtk_label_new("Почта устройства задаётся на странице pairing и здесь только отображается.");
+    gtk_label_set_line_wrap(GTK_LABEL(hint), TRUE);
+    gtk_misc_set_alignment(GTK_MISC(hint), 0, 0.5);
+    set_large_font(relay_label, "Sans Bold 18");
+    set_large_font(email_label, "Sans Bold 18");
+    set_large_font(hint, "Sans 16");
+    set_large_font(GTK_WIDGET(page->relay), "Sans 20");
+    set_large_font(GTK_WIDGET(page->email), "Sans 20");
+    set_large_font(page->auto_download, "Sans 17");
+    gtk_entry_set_text(page->relay, app->config->relay_url ? app->config->relay_url : "");
+    gtk_entry_set_text(page->email, app->config->kindle_email ? app->config->kindle_email : "");
+    gtk_widget_set_sensitive(GTK_WIDGET(page->email), FALSE);
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(page->auto_download), app->config->auto_download);
+    gtk_box_pack_start(GTK_BOX(body), relay_label, FALSE, FALSE, 4);
+    gtk_box_pack_start(GTK_BOX(body), GTK_WIDGET(page->relay), FALSE, FALSE, 4);
+    gtk_box_pack_start(GTK_BOX(body), email_label, FALSE, FALSE, 4);
+    gtk_box_pack_start(GTK_BOX(body), GTK_WIDGET(page->email), FALSE, FALSE, 4);
+    gtk_box_pack_start(GTK_BOX(body), hint, FALSE, FALSE, 4);
+    gtk_box_pack_start(GTK_BOX(body), page->auto_download, FALSE, FALSE, 12);
+    page->keyboard = virtual_keyboard_new(body, page->relay);
+
+    cancel_button = page_button("Отмена");
+    save_button = page_button("Сохранить");
+    g_signal_connect(cancel_button, "clicked", G_CALLBACK(settings_page_cancel), page);
+    g_signal_connect(save_button, "clicked", G_CALLBACK(settings_page_save), page);
+    gtk_box_pack_start(GTK_BOX(actions), cancel_button, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(actions), save_button, TRUE, TRUE, 0);
+    gtk_widget_show_all(window);
+    virtual_keyboard_show_for(page->keyboard, page->relay);
+    gtk_window_set_focus(GTK_WINDOW(window), GTK_WIDGET(page->relay));
+    g_idle_add(focus_widget_idle, page->relay);
 }
 
 static void exit_clicked(GtkButton *button, gpointer userdata) {
@@ -704,85 +1078,86 @@ static gboolean async_task_complete(gpointer userdata) {
 }
 
 static void build_ui(App *app) {
-    GtkWidget *root = gtk_vbox_new(FALSE, 12);
-    GtkWidget *header = gtk_vbox_new(FALSE, 3);
+    GtkWidget *root = gtk_vbox_new(FALSE, 6);
+    GtkWidget *header = gtk_hbox_new(FALSE, 8);
+    GtkWidget *search_row = gtk_hbox_new(FALSE, 8);
+    GtkWidget *category_row = gtk_hbox_new(FALSE, 8);
+    GtkWidget *actions = gtk_hbox_new(TRUE, 6);
+    GtkWidget *navigation = gtk_hbox_new(TRUE, 6);
     GtkWidget *title = gtk_label_new("BookRelay Kindle");
-    GtkWidget *subtitle = gtk_label_new("Книги из relay в библиотеку Kindle");
-    GtkWidget *search_label = gtk_label_new("Поиск по названию или автору");
-    GtkWidget *search_row = gtk_hbox_new(FALSE, 10);
     GtkWidget *search_button = gtk_button_new_with_label("Искать");
     GtkWidget *category_label = gtk_label_new("Категория");
-    GtkWidget *actions = gtk_hbox_new(FALSE, 10);
     GtkWidget *pair_button = gtk_button_new_with_label("Pairing");
     GtkWidget *settings_button = gtk_button_new_with_label("Настройки");
     GtkWidget *exit_button = gtk_button_new_with_label("Выйти");
-    GtkWidget *navigation = gtk_hbox_new(FALSE, 10);
     GtkWidget *previous_page = gtk_button_new_with_label("Назад");
     GtkWidget *next_page = gtk_button_new_with_label("Дальше");
     GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
     app->window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     app->query = gtk_entry_new();
     app->categories = gtk_combo_box_new_text();
-    app->results = gtk_vbox_new(FALSE, 8);
-    app->status = gtk_label_new("Готово");
-    app->connection = gtk_label_new("Relay не подключён — откройте Pairing");
+    app->results = gtk_vbox_new(FALSE, 6);
+    app->status = gtk_label_new("Готово к поиску");
+    app->connection = gtk_label_new("Relay не подключён");
     app->category_ids = g_ptr_array_new_with_free_func(g_free);
     app->previous_page = previous_page;
     app->next_page = next_page;
     app->page = 1;
+
     gtk_window_set_title(GTK_WINDOW(app->window), KINDLE_APP_WINDOW_TITLE);
-    gtk_window_set_default_size(GTK_WINDOW(app->window), 700, 1000);
+    gtk_window_set_default_size(GTK_WINDOW(app->window), 758, 900);
     gtk_window_set_position(GTK_WINDOW(app->window), GTK_WIN_POS_CENTER);
     gtk_window_set_resizable(GTK_WINDOW(app->window), TRUE);
-    set_large_font(title, "Sans Bold 26");
-    set_large_font(subtitle, "Sans 16");
-    set_large_font(search_label, "Sans Bold 18");
-    set_large_font(category_label, "Sans Bold 18");
-    set_large_font(app->connection, "Sans 16");
-    set_large_font(app->status, "Sans 16");
-    set_large_font(app->query, "Sans 21");
-    set_large_font(app->categories, "Sans 18");
+    set_large_font(title, "Sans Bold 22");
+    set_large_font(app->connection, "Sans 14");
+    set_large_font(app->status, "Sans 14");
+    set_large_font(app->query, "Sans 19");
+    set_large_font(app->categories, "Sans 16");
     gtk_misc_set_alignment(GTK_MISC(title), 0, 0.5);
-    gtk_misc_set_alignment(GTK_MISC(subtitle), 0, 0.5);
-    gtk_misc_set_alignment(GTK_MISC(search_label), 0, 0.5);
-    gtk_misc_set_alignment(GTK_MISC(category_label), 0, 0.5);
-    gtk_misc_set_alignment(GTK_MISC(app->connection), 0, 0.5);
+    gtk_misc_set_alignment(GTK_MISC(app->connection), 1, 0.5);
     gtk_misc_set_alignment(GTK_MISC(app->status), 0, 0.5);
     gtk_entry_set_activates_default(GTK_ENTRY(app->query), TRUE);
-    gtk_entry_set_width_chars(GTK_ENTRY(app->query), 30);
+    gtk_entry_set_width_chars(GTK_ENTRY(app->query), 24);
+    gtk_widget_set_tooltip_text(app->query, "Название или автор");
     gtk_combo_box_append_text(GTK_COMBO_BOX(app->categories), "Все категории");
     gtk_combo_box_set_active(GTK_COMBO_BOX(app->categories), 0);
-    make_touch_target(search_button, 180, 64);
-    make_touch_target(pair_button, 180, 62);
-    make_touch_target(settings_button, 180, 62);
-    make_touch_target(exit_button, 150, 62);
-    make_touch_target(previous_page, 190, 62);
-    make_touch_target(next_page, 190, 62);
-    gtk_widget_set_size_request(app->query, -1, 64);
-    gtk_widget_set_size_request(app->categories, -1, 58);
-    gtk_widget_set_size_request(app->results, -1, 500);
+    make_touch_target(search_button, 128, 50);
+    make_touch_target(pair_button, 140, 48);
+    make_touch_target(settings_button, 150, 48);
+    make_touch_target(exit_button, 112, 48);
+    make_touch_target(previous_page, 150, 48);
+    make_touch_target(next_page, 150, 48);
+    gtk_widget_set_size_request(app->query, -1, 50);
+    gtk_widget_set_size_request(app->categories, -1, 48);
+    gtk_widget_set_size_request(app->status, -1, 30);
+    gtk_widget_set_size_request(scroll, -1, 260);
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(scroll), GTK_SHADOW_IN);
     gtk_scrolled_window_add_with_viewport(GTK_SCROLLED_WINDOW(scroll), app->results);
-    gtk_box_pack_start(GTK_BOX(header), title, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(header), subtitle, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(header), app->connection, FALSE, FALSE, 8);
-    gtk_box_pack_start(GTK_BOX(root), header, FALSE, FALSE, 8);
-    gtk_box_pack_start(GTK_BOX(root), search_label, FALSE, FALSE, 0);
+
+    gtk_box_pack_start(GTK_BOX(header), title, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(header), app->connection, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(search_row), app->query, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(search_row), search_button, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(root), search_row, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(root), category_label, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(root), app->categories, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(root), scroll, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(category_row), category_label, FALSE, FALSE, 2);
+    gtk_box_pack_start(GTK_BOX(category_row), app->categories, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(navigation), previous_page, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(navigation), next_page, TRUE, TRUE, 0);
-    gtk_box_pack_start(GTK_BOX(root), navigation, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(actions), pair_button, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(actions), settings_button, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(actions), exit_button, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(root), header, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(root), search_row, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(root), category_row, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(root), scroll, TRUE, TRUE, 0);
+    {
+        VirtualKeyboard *keyboard = virtual_keyboard_new(root, GTK_ENTRY(app->query));
+        app->keyboard = keyboard->root;
+    }
+    gtk_box_pack_start(GTK_BOX(root), navigation, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(root), actions, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(root), app->status, FALSE, FALSE, 0);
-    gtk_container_set_border_width(GTK_CONTAINER(root), 18);
+    gtk_container_set_border_width(GTK_CONTAINER(root), 10);
     gtk_container_add(GTK_CONTAINER(app->window), root);
     g_signal_connect(search_button, "clicked", G_CALLBACK(search_clicked), app);
     g_signal_connect(app->query, "activate", G_CALLBACK(search_entry_activate), app);
@@ -797,8 +1172,7 @@ static void build_ui(App *app) {
     update_connection(app);
     render_empty_state(app, app->config->token && *app->config->token ? "Готово к поиску" : "Подключите relay");
     gtk_widget_show_all(app->window);
-    gtk_window_set_focus(GTK_WINDOW(app->window), app->query);
-    g_idle_add(focus_widget_idle, app->query);
+    gtk_widget_hide(app->keyboard);
     if (app->config->token && *app->config->token) load_categories(app);
 }
 

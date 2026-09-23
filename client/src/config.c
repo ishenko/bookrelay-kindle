@@ -7,7 +7,7 @@ BookRelayConfig *bookrelay_config_load(const gchar *path) {
     BookRelayConfig *config = g_new0(BookRelayConfig, 1);
     GError *error = NULL;
 
-    config->relay_url = g_strdup("https://relay.example.invalid");
+    config->relay_url = g_strdup("");
     config->kindle_email = g_strdup("");
     config->token = g_strdup("");
     config->auto_download = FALSE;

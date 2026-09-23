@@ -29,7 +29,7 @@ Copy the example environment file, set SMTP credentials, and start the service:
     cp .env.example .env
     docker compose up -d --build
 
-Set BOOKRELAY_PAIRING_ADMIN_KEY to a long random secret. BOOKRELAY_DEFAULT_KINDLE_EMAIL is optional and only serves as a fallback for older pairing links; the pairing page accepts a separate Kindle Email for every device. Keep BOOKRELAY_DELIVERY_ENABLED=false until SMTP is configured. Enter the owner key only on the HTTPS pairing page. SMTP credentials and the Kindle Email never go into the Kindle client.
+Set BOOKRELAY_PAIRING_ADMIN_KEY to a long random secret. BOOKRELAY_DEFAULT_KINDLE_EMAIL is optional and only serves as a fallback for older pairing links; the pairing page accepts a separate Kindle Email for every device. BOOKRELAY_DELIVERY_ENABLED defaults to true, and should be set to false while SMTP is being configured if you want the relay to fail closed. Enter the owner key only on the HTTPS pairing page. SMTP credentials and the Kindle Email never go into the Kindle client.
 
 The relay listens on port 8000 by default. Put it behind HTTPS before using it from a Kindle. A reverse proxy such as Caddy or nginx should terminate TLS and limit access to the pairing page and API as appropriate.
 
@@ -58,7 +58,7 @@ After a new GitHub Release, update the installed package with:
 
 To prepare the package offline, copy the whole bookrelay-kpm folder from the
 release files to the Kindle USB root. It must contain manifest.json and
-packages/bookrelay-kindle_0.1.6_kindlehf.kpkg. Then run:
+packages/bookrelay-kindle_0.1.7_kindlehf.kpkg. Then run:
 
     kpm add-repo file:///mnt/us/bookrelay-kpm/manifest.json
     kpm update

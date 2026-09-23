@@ -36,6 +36,9 @@ class KindleUiContractTests(unittest.TestCase):
         self.assertIn("gtk_window_set_focus", source)
         self.assertIn("search_entry_activate", source)
         self.assertIn("gtk_entry_set_activates_default", source)
+        self.assertIn("virtual_keyboard_bind(page->keyboard, page->code)", source)
+        self.assertIn("VirtualKeyboard *keyboard = virtual_keyboard_new", source)
+        self.assertNotIn("virtual_keyboard_new(GTK_BOX(root), GTK_ENTRY(app->query))->root;", source)
 
     def test_pairing_dialog_is_large_and_validates_relay_url(self):
         source = Path(__file__).parents[1].joinpath("src", "main.c").read_text()
@@ -99,6 +102,17 @@ class KindleUiContractTests(unittest.TestCase):
         source = Path(__file__).parents[1].joinpath("src", "main.c").read_text()
         self.assertIn("g_thread_new", source)
         self.assertIn("delete_event", source)
+
+    def test_native_page_windows_and_results_keep_visible_layout(self):
+        source = Path(__file__).parents[1].joinpath("src", "main.c").read_text()
+        self.assertIn("new_kindle_page", source)
+        self.assertNotIn("gtk_widget_set_size_request(app->results, 0, 0)", source)
+
+    def test_native_api_joins_relay_urls_and_reports_error_details(self):
+        api = Path(__file__).parents[1].joinpath("src", "api.c").read_text()
+        self.assertIn('gchar *endpoint = join_url(base_url, "/v1/search")', api)
+        self.assertIn('relay returned HTTP %ld: %s', api)
+        self.assertIn('gchar *path = g_strdup_printf("/v1/deliveries/%s", job_id)', api)
 
 
 if __name__ == "__main__":

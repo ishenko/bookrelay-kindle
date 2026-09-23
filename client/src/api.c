@@ -73,7 +73,14 @@ static gboolean request_bytes(const gchar *method, const gchar *url, const gchar
     } else if (result != CURLE_OK) {
         g_set_error(error, API_ERROR, 2, "network request failed: %s", curl_easy_strerror(result));
     } else if (*status < 200 || *status >= 300) {
-        g_set_error(error, API_ERROR, (gint)*status, "relay returned HTTP %ld", *status);
+        gchar *detail = g_strndup((const gchar *)response.data->data, MIN(response.data->len, (gsize)240));
+        g_strstrip(detail);
+        if (*detail) {
+            g_set_error(error, API_ERROR, (gint)*status, "relay returned HTTP %ld: %s", *status, detail);
+        } else {
+            g_set_error(error, API_ERROR, (gint)*status, "relay returned HTTP %ld", *status);
+        }
+        g_free(detail);
     } else {
         *payload = response.data;
         response.data = NULL;
@@ -180,13 +187,14 @@ static gchar *join_url(const gchar *base, const gchar *path) {
 GPtrArray *bookrelay_api_search(const gchar *base_url, const gchar *token, const gchar *query, const gchar *category, gint page, GError **error) {
     gchar *encoded = url_encode(query);
     gchar *encoded_category = category && *category ? url_encode(category) : NULL;
+    gchar *endpoint = join_url(base_url, "/v1/search");
     gchar *url = encoded_category
-        ? g_strdup_printf("%s/v1/search?q=%s&category=%s&page=%d", base_url, encoded, encoded_category, page)
-        : g_strdup_printf("%s/v1/search?q=%s&page=%d", base_url, encoded, page);
+        ? g_strdup_printf("%s?q=%s&category=%s&page=%d", endpoint, encoded, encoded_category, page)
+        : g_strdup_printf("%s?q=%s&page=%d", endpoint, encoded, page);
     long status;
     gchar *body = request("GET", url, token, NULL, &status, error);
     GPtrArray *books = body ? parse_books(body) : NULL;
-    g_free(encoded); g_free(encoded_category); g_free(url); g_free(body);
+    g_free(encoded); g_free(encoded_category); g_free(endpoint); g_free(url); g_free(body);
     return books;
 }
 
@@ -211,7 +219,8 @@ GPtrArray *bookrelay_api_categories(const gchar *base_url, const gchar *token, G
 }
 
 BookRelayBook *bookrelay_api_book(const gchar *base_url, const gchar *token, const gchar *book_id, GError **error) {
-    gchar *url = g_strdup_printf("%s/v1/books/%s", base_url, book_id);
+    gchar *path = g_strdup_printf("/v1/books/%s", book_id);
+    gchar *url = join_url(base_url, path);
     long status;
     gchar *body = request("GET", url, token, NULL, &status, error);
     BookRelayBook *book = NULL;
@@ -224,7 +233,7 @@ BookRelayBook *bookrelay_api_book(const gchar *base_url, const gchar *token, con
         book->description = json_string(body, "description");
         book->translator = json_string(body, "translator");
     }
-    g_free(url); g_free(body);
+    g_free(path); g_free(url); g_free(body);
     return book;
 }
 
@@ -257,11 +266,12 @@ gchar *bookrelay_api_send(const gchar *base_url, const gchar *token, const gchar
 }
 
 gchar *bookrelay_api_delivery_status(const gchar *base_url, const gchar *token, const gchar *job_id, GError **error) {
-    gchar *url = g_strdup_printf("%s/v1/deliveries/%s", base_url, job_id);
+    gchar *path = g_strdup_printf("/v1/deliveries/%s", job_id);
+    gchar *url = join_url(base_url, path);
     long status;
     gchar *body = request("GET", url, token, NULL, &status, error);
     gchar *state = body ? json_string(body, "status") : NULL;
-    g_free(url); g_free(body);
+    g_free(path); g_free(url); g_free(body);
     return state;
 }
 

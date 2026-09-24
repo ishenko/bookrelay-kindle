@@ -398,12 +398,19 @@ class FlibustaParserTests(unittest.TestCase):
                          '/i/48/659948/img_12')
         self.assertEqual(source.cover_path('626662', 'https://flibusta.is/i/62/626662/_1551035688_76.jpg'),
                          '/i/62/626662/_1551035688_76.jpg')
+        self.assertEqual(source.cover_path('756694', 'https://flibusta.is/i/94/756694/OEBPS/Images/x0000.jpg.jpg'),
+                         '/i/94/756694/OEBPS/Images/x0000.jpg.jpg')
+        self.assertEqual(source.cover_path('151708', 'https://flibusta.is/i/8/151708/otanix..jpg'),
+                         '/i/8/151708/otanix..jpg')
         for url in ('https://elsewhere.test/i/98/451198/cover.jpg',
                     'https://flibusta.is/covers/123.jpg',
                     'https://flibusta.is/covers/451198.jpg?from=other',
                     'https://flibusta.is/i/98/1/cover.jpg',
                     'https://flibusta.is/i/98/451198/cover.jpg?redirect=1',
                     'https://flibusta.is/i/98/451198/../secret',
+                    'https://flibusta.is/i/98/451198/OEBPS/../secret',
+                    'https://flibusta.is/i/98/451198/OEBPS/%2e%2e/secret',
+                    'https://flibusta.is/i/98/451198//secret',
                     'https://flibusta.is/i/98/451198/%2e%2e'):
             with self.assertRaises(ValueError):
                 source.cover_path('451198', url)

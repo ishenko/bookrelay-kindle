@@ -307,14 +307,17 @@ class FlibustaSource:
         origin, cover = urlsplit(self.base_url), urlsplit(cover_url)
         if not re.fullmatch(r"[0-9]+", book_id) or (cover.scheme, cover.netloc) != (origin.scheme, origin.netloc):
             raise ValueError("invalid cover URL")
-        # OPDS feeds also publish /covers/{book_id}.jpg thumbnails. Restrict
-        # both supported layouts to the same book on the configured host.
-        filename = cover.path.rsplit("/", 1)[-1]
-        image_folder = re.fullmatch(rf"/i/[0-9]{{1,2}}/{re.escape(book_id)}/[^/]+", cover.path)
+        # Some EPUB thumbnails live in nested paths such as
+        # /i/94/756694/OEBPS/Images/x0000.jpg.jpg. Validate every segment
+        # separately; the book id and origin must still match.
+        image_folder = re.fullmatch(rf"/i/[0-9]{{1,2}}/{re.escape(book_id)}/(.+)", cover.path)
         direct_cover = re.fullmatch(rf"/covers/{re.escape(book_id)}\.(?:jpg|jpeg|png)", cover.path, re.I)
+        parts = image_folder.group(1).split("/") if image_folder else []
         if (cover.query or cover.fragment or not (image_folder or direct_cover) or
-                not re.fullmatch(r"[A-Za-z0-9_-][A-Za-z0-9._-]{0,95}", filename) or
-                ".." in filename):
+                (image_folder and (len(parts) > 6 or len(cover.path) > 256 or
+                                   any(part in (".", "..") or
+                                       not re.fullmatch(r"[A-Za-z0-9._-]{1,96}", part)
+                                       for part in parts)))):
             raise ValueError("invalid cover path")
         return cover.path
 

@@ -237,6 +237,37 @@ class FlibustaParserTests(unittest.TestCase):
                                           '/opds/genres/7?page=2',
                                           '/opds/genres/7', '/opds/genres/7?page=2'])
 
+    def test_relative_next_link_is_resolved_against_the_current_feed(self):
+        class StubSource(FlibustaSource):
+            def __init__(self):
+                super().__init__()
+                self.requests = []
+
+            def _get(self, path):
+                self.requests.append(path)
+                next_link = '<link rel="next" href="?page=2" />' if '?' not in path else ''
+                book_id = '1' if '?' not in path else '2'
+                return (f'<feed xmlns="http://www.w3.org/2005/Atom">{next_link}'
+                        f'<entry><title>Book</title><link rel="http://opds-spec.org/acquisition/open-access" '
+                        f'href="/b/{book_id}/epub" /></entry></feed>').encode()
+
+        source = StubSource()
+        books, more = source.catalog_books('/opds/genres/A', '/opds/genres/A/1', 1, 1)
+        self.assertEqual([book.id for book in books], ['1'])
+        self.assertTrue(more)
+        books, more = source.catalog_books('/opds/genres/A', '/opds/genres/A/1', 2, 1)
+        self.assertEqual([book.id for book in books], ['2'])
+        self.assertFalse(more)
+        self.assertEqual(source.requests[-1], '/opds/genres/A/1?page=2')
+
+    def test_invalid_next_links_are_reported_as_source_errors(self):
+        source = FlibustaSource()
+        for href in ('https://elsewhere.test/opds/books', '//elsewhere.test/opds/books',
+                     'http://flibusta.is/opds/books', '/admin', 'http://[invalid',
+                     '/opds/books#fragment', '/opds/books\nother'):
+            with self.subTest(href=href), self.assertRaises(SourceUnavailable):
+                source._next_page_path('/opds/genres/A/1', href)
+
     def test_catalog_first_page_does_not_refetch_navigation(self):
         class StubSource(FlibustaSource):
             def __init__(self):

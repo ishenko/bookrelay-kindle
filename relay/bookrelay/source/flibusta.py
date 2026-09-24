@@ -288,8 +288,24 @@ class FlibustaSource:
             visited.add(path)
             books, next_link = self._book_feed(path, target + 1 - len(books_seen), cache)
             books_seen.extend(books)
-            path = next_link
+            path = self._next_page_path(path, next_link) if next_link else None
         return books_seen[start:start + size], len(books_seen) > start + size or bool(path)
+
+    def _next_page_path(self, current: str, href: str) -> str:
+        # OPDS links are supplied by the source. Resolve relative links against
+        # the current feed, but never follow one to another host or endpoint.
+        try:
+            link = urlsplit(href)
+            resolved = urlsplit(urljoin(urljoin(self.base_url + "/", current.lstrip("/")), href))
+        except ValueError as exc:
+            raise SourceUnavailable("Flibusta returned invalid pagination") from exc
+        origin = urlsplit(self.base_url)
+        if (not href or link.fragment or resolved.fragment or
+                (resolved.scheme, resolved.netloc) != (origin.scheme, origin.netloc) or
+                not resolved.path.startswith("/opds/") or
+                any(ord(char) < 32 for char in href)):
+            raise SourceUnavailable("Flibusta returned invalid pagination")
+        return resolved.path + ("?" + resolved.query if resolved.query else "")
 
     def categories(self) -> list[dict[str, str]]:
         if self._snapshot_categories is not None:

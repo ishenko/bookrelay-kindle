@@ -1935,8 +1935,11 @@ static gboolean async_task_complete(gpointer userdata) {
                 gchar *path = cover_cache_path(task->book_id);
                 gchar *directory = g_path_get_dirname(path);
                 GdkPixbuf *pixbuf = pixbuf_from_bytes(task->cover_bytes);
-                if (cache_has_room(directory, path, task->cover_bytes->len)) g_file_set_contents(path, (const gchar *)task->cover_bytes->data, (gssize)task->cover_bytes->len, NULL);
                 if (pixbuf) {
+                    /* Do not cache an HTTP response that GTK cannot decode. */
+                    if (cache_has_room(directory, path, task->cover_bytes->len))
+                        g_file_set_contents(path, (const gchar *)task->cover_bytes->data,
+                                            (gssize)task->cover_bytes->len, NULL);
                     if (task->generation == app->generation) {
                         GdkPixbuf *scaled = gdk_pixbuf_scale_simple(pixbuf, task->cover_width,
                                                                      task->cover_height, GDK_INTERP_BILINEAR);

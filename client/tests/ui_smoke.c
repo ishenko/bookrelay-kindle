@@ -515,6 +515,19 @@ int main(int argc, char **argv) {
         }
         drain_events();
         if (app.active_tasks) g_error("cover download timed out");
+        if (g_getenv("BOOKRELAY_TEST_CORRUPT_COVER")) {
+            gchar *cache = cover_cache_path(book->id);
+            if (g_file_test(cache, G_FILE_TEST_EXISTS))
+                g_error("undecodable image was cached");
+            g_free(cache);
+            render_books(&app, books);
+            deadline = g_get_monotonic_time() + 10 * G_USEC_PER_SEC;
+            while (app.active_tasks && g_get_monotonic_time() < deadline) {
+                drain_events();
+                g_usleep(10000);
+            }
+        }
+        if (app.active_tasks) g_error("cover retry timed out");
         image = find_cover_image(app.results);
         if (!image || !GTK_WIDGET_VISIBLE(image) || !GTK_WIDGET_MAPPED(image))
             g_error("downloaded cover is not visible");

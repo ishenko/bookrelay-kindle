@@ -3,6 +3,7 @@
 import os
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -18,11 +19,12 @@ def main(binary: str, output: str) -> None:
     requests = []
     active = 0
     peak = 0
+    cover_attempts = 0
     lock = threading.Lock()
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
-            nonlocal active, peak
+            nonlocal active, peak, cover_attempts
             stress_request = self.path != EXPECTED_PATH
             with lock:
                 requests.append((self.path, self.headers.get("Authorization")))
@@ -41,11 +43,15 @@ def main(binary: str, output: str) -> None:
                 with lock:
                     if stress_request:
                         active -= 1
+                if self.path == EXPECTED_PATH:
+                    cover_attempts += 1
+                broken = self.path == EXPECTED_PATH and cover_attempts == 1
+                payload = b"not an image" if broken else jpeg
                 self.send_response(200)
                 self.send_header("Content-Type", "image/jpeg")
-                self.send_header("Content-Length", str(len(jpeg)))
+                self.send_header("Content-Length", str(len(payload)))
                 self.end_headers()
-                self.wfile.write(jpeg)
+                self.wfile.write(payload)
 
         def log_message(self, *_args):
             pass
@@ -54,16 +60,18 @@ def main(binary: str, output: str) -> None:
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        env = dict(os.environ, BOOKRELAY_TEST_DPI="300",
-                   BOOKRELAY_TEST_COVER_RELAY=f"http://127.0.0.1:{server.server_port}")
-        subprocess.run(["xvfb-run", "-a", "-s", "-screen 0 1264x1680x24", binary, output],
-                       check=True, env=env, timeout=40)
+        with tempfile.TemporaryDirectory() as data_home:
+            env = dict(os.environ, BOOKRELAY_TEST_DPI="300", XDG_DATA_HOME=data_home,
+                       BOOKRELAY_TEST_CORRUPT_COVER="1",
+                       BOOKRELAY_TEST_COVER_RELAY=f"http://127.0.0.1:{server.server_port}")
+            subprocess.run(["xvfb-run", "-a", "-s", "-screen 0 1264x1680x24", binary, output],
+                           check=True, env=env, timeout=40)
     finally:
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
     assert len(requests) < 13 + 96, len(requests)
-    assert requests[0] == (EXPECTED_PATH, "Bearer smoke-test-token"), requests
+    assert requests[:2] == [(EXPECTED_PATH, "Bearer smoke-test-token")] * 2, requests[:2]
     assert all(auth == "Bearer smoke-test-token" for _, auth in requests), requests
     assert peak <= 3, peak
     assert (Path(output) / "book-list-with-cover.png").is_file()

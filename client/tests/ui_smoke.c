@@ -33,12 +33,12 @@ static void expect_search_keyboard_deferred(GtkWidget *widget, GdkEvent *event, 
 
 static gboolean first_search_focus_seen;
 
-static gboolean expect_search_focus_before_keyboard(GtkWidget *widget, GdkEventFocus *event, gpointer userdata) {
+static gboolean expect_search_keyboard_before_focus(GtkWidget *widget, GdkEventFocus *event, gpointer userdata) {
     App *app = userdata;
     VirtualKeyboard *keyboard = g_object_get_data(G_OBJECT(app->keyboard), "bookrelay-keyboard-state");
     if (!first_search_focus_seen) {
-        if (keyboard->native_open)
-            g_error("Kindle keyboard opened during initial search focus-in");
+        if (!keyboard->native_open)
+            g_error("search focused before the Kindle keyboard opened");
         first_search_focus_seen = TRUE;
     }
     return FALSE;
@@ -298,7 +298,7 @@ int main(int argc, char **argv) {
         app.catalog_ready = TRUE;
         search_keyboard = g_object_get_data(G_OBJECT(app.keyboard), "bookrelay-keyboard-state");
         /* Exercise the production focus handler, including the icon path. */
-        g_signal_connect_after(app.query, "focus-in-event", G_CALLBACK(expect_search_focus_before_keyboard), &app);
+        g_signal_connect_after(app.query, "focus-in-event", G_CALLBACK(expect_search_keyboard_before_focus), &app);
         g_signal_connect(app.search_icon, "event-after", G_CALLBACK(expect_search_keyboard_deferred), &app);
         /* A real click bubbles to the window's background-tap handler. */
         if (!gdk_test_simulate_button(app.search_icon->window,
@@ -318,7 +318,7 @@ int main(int argc, char **argv) {
         drain_events();
         expect_visible(app.query, "native search entry");
         if (!first_search_focus_seen)
-            g_error("search entry never received focus-in before opening the keyboard");
+            g_error("search entry never received focus-in after opening the keyboard");
         if (gtk_window_get_focus(GTK_WINDOW(app.window)) != app.query)
             g_error("native search entry did not receive keyboard focus");
         search_keyboard = g_object_get_data(G_OBJECT(app.keyboard), "bookrelay-keyboard-state");

@@ -651,28 +651,18 @@ static gboolean focus_widget_idle(gpointer userdata) {
     return FALSE;
 }
 
-static gboolean focus_search_keyboard_idle(gpointer userdata) {
-    App *app = userdata;
-    VirtualKeyboard *keyboard = g_object_get_data(G_OBJECT(app->keyboard), "bookrelay-keyboard-state");
-    keyboard->defer_search_open = FALSE;
-    if (!app->page_window && app->view == VIEW_SEARCH && GTK_WIDGET_MAPPED(app->query)) {
-        virtual_keyboard_show_for(keyboard, GTK_ENTRY(app->query));
-        gtk_window_set_focus(GTK_WINDOW(app->window), app->query);
-        gtk_widget_grab_focus(app->query);
-        g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, focus_widget_idle,
-                        g_object_ref(app->query), g_object_unref);
-    }
-    return FALSE;
-}
-
 static gboolean focus_search_idle(gpointer userdata) {
     App *app = userdata;
     VirtualKeyboard *keyboard = g_object_get_data(G_OBJECT(app->keyboard), "bookrelay-keyboard-state");
     if (!app->page_window && app->view == VIEW_SEARCH && GTK_WIDGET_MAPPED(app->query)) {
-        /* Finish GTK focus-in before opening the external keyboard. */
+        /* Settings fields open the Kindle keyboard before taking entry focus.
+         * Use the same order for search, after the icon release has finished. */
+        virtual_keyboard_show_for(keyboard, GTK_ENTRY(app->query));
+        keyboard->defer_search_open = FALSE;
         gtk_window_set_focus(GTK_WINDOW(app->window), app->query);
         gtk_widget_grab_focus(app->query);
-        g_idle_add(focus_search_keyboard_idle, app);
+        g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, focus_widget_idle,
+                        g_object_ref(app->query), g_object_unref);
     } else {
         keyboard->defer_search_open = FALSE;
     }

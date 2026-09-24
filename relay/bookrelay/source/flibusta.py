@@ -202,12 +202,18 @@ class FlibustaSource:
             next_link = next((link.get("href") for link in root.findall(f"{ATOM}link") if link.get("rel") == "next"), None)
             return parse_opds_feed(payload, self.base_url)[1], next_link
 
+        stale = None
         if cache:
             with self._book_cache_lock:
                 cached = self._book_cache.get(path)
-                if cached and monotonic() - cached[0] < 300 and (len(cached[1]) >= needed or cached[3]):
-                    self._book_cache.move_to_end(path)
-                    return cached[1][:needed], cached[2] if cached[3] else None
+                if cached and (len(cached[1]) >= needed or cached[3]):
+                    if monotonic() - cached[0] < 300:
+                        self._book_cache.move_to_end(path)
+                        return cached[1][:needed], cached[2] if cached[3] else None
+                    # Keep an expired, bounded prefix as a fallback. An
+                    # incomplete prefix cannot answer a deeper page safely.
+                    if monotonic() - cached[0] < 3600:
+                        stale = (cached[1][:needed], cached[2] if cached[3] else None)
         for attempt in range(2):
             try:
                 # OPDS normally has 20 books per feed. Reading one extra entry
@@ -224,6 +230,8 @@ class FlibustaSource:
                             self._book_cache.popitem(last=False)
                 return books, next_link
             except (HTTPError, URLError, OSError, TimeoutError, http.client.HTTPException) as exc:
+                if stale and retryable_source_error(exc):
+                    return stale
                 if attempt or not retryable_source_error(exc):
                     raise SourceUnavailable("Flibusta did not respond; please retry") from exc
 

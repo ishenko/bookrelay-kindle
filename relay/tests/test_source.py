@@ -3,6 +3,7 @@ import json
 from http.client import IncompleteRead
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from time import monotonic
 from urllib.error import HTTPError
 from unittest.mock import patch
 
@@ -363,6 +364,36 @@ class FlibustaParserTests(unittest.TestCase):
             source._book_feed('/opds/genres/A/19', 13, cache=True)
         self.assertEqual(len(source._book_cache), 16)
         self.assertEqual(fetch.call_count, 20)
+
+    def test_expired_book_page_survives_transient_source_failure(self):
+        source = FlibustaSource()
+        category, subcategory = '/opds/genres/A', '/opds/genres/A/1'
+        feed = (b'<feed xmlns="http://www.w3.org/2005/Atom">' +
+                b''.join(f'<entry><title>Book {i}</title><link rel="http://opds-spec.org/acquisition/open-access" href="/b/{i}/epub" /></entry>'.encode()
+                         for i in range(13)) + b'</feed>')
+        _, books, _ = parse_opds_feed(feed, source.base_url)
+        source._book_cache[subcategory] = (monotonic() - 301, books, None, False)
+        with patch.object(source, '_stream_book_feed', side_effect=OSError('upstream timed out')) as fetch:
+            first, more = source.catalog_books(category, subcategory, 1, 12)
+        self.assertEqual([book.id for book in first], [str(i) for i in range(12)])
+        self.assertTrue(more)
+        self.assertEqual(fetch.call_count, 1)
+
+        # The same partial prefix cannot claim to answer the next page.
+        with patch.object(source, '_stream_book_feed', side_effect=OSError('upstream timed out')) as fetch:
+            with self.assertRaises(SourceUnavailable):
+                source.catalog_books(category, subcategory, 2, 12)
+        self.assertEqual(fetch.call_count, 2)
+
+    def test_expired_book_page_does_not_mask_a_missing_source_page(self):
+        source = FlibustaSource()
+        path = '/opds/genres/A/1'
+        source._book_cache[path] = (monotonic() - 301, [], None, True)
+        missing = HTTPError('https://flibusta.is' + path, 404, 'missing', {}, None)
+        with patch.object(source, '_stream_book_feed', side_effect=missing) as fetch:
+            with self.assertRaises(SourceUnavailable):
+                source._book_feed(path, 13, cache=True)
+        self.assertEqual(fetch.call_count, 1)
 
     def test_catalog_next_page_reuses_previous_opds_feed(self):
         class StubSource(FlibustaSource):

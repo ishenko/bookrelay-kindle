@@ -68,9 +68,14 @@ def parse_book_entry(entry: ET.Element, base_url: str) -> Book | None:
     cover = next((link.get("href", "") for link in links if link.get("rel") in ("http://opds-spec.org/image/thumbnail", "http://opds-spec.org/image", "http://opds-spec.org/thumbnail")), "")
     issued = entry.findtext(f"{DC}issued") or ""
     content = entry.findtext(f"{ATOM}content") or ""
+    try:
+        cover_url = urljoin(base_url, cover) if cover else ""
+    except ValueError:
+        # One malformed image link must not fail the entire OPDS book page.
+        cover_url = ""
     return Book(id=match.group(1), title=(entry.findtext(f"{ATOM}title") or "").strip(),
                 author=", ".join(author.findtext(f"{ATOM}name") or "" for author in entry.findall(f"{ATOM}author")),
-                cover_url=urljoin(base_url, cover) if cover else "",
+                cover_url=cover_url,
                 description=clean_text(content)[:2000],
                 year=int(issued[:4]) if re.fullmatch(r"\d{4}", issued[:4]) else None)
 
@@ -328,7 +333,10 @@ class FlibustaSource:
 
     def cover_path(self, book_id: str, cover_url: str) -> str:
         """Only cover paths tied to this book on the configured OPDS host may be fetched."""
-        origin, cover = urlsplit(self.base_url), urlsplit(cover_url)
+        try:
+            origin, cover = urlsplit(self.base_url), urlsplit(cover_url)
+        except ValueError as exc:
+            raise ValueError("invalid cover URL") from exc
         if not re.fullmatch(r"[0-9]+", book_id) or (cover.scheme, cover.netloc) != (origin.scheme, origin.netloc):
             raise ValueError("invalid cover URL")
         # Some EPUB thumbnails live in nested paths such as

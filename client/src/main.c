@@ -653,6 +653,15 @@ static gboolean focus_widget_idle(gpointer userdata) {
     return FALSE;
 }
 
+static void refocus_search_entry(App *app) {
+    gint position = gtk_editable_get_position(GTK_EDITABLE(app->query));
+    /* GTK may select all text when an entry receives focus again. Preserve
+     * the caret so the next Kindle character appends instead of replacing. */
+    gtk_window_set_focus(GTK_WINDOW(app->window), NULL);
+    gtk_widget_grab_focus(app->query);
+    gtk_editable_select_region(GTK_EDITABLE(app->query), position, position);
+}
+
 static gboolean focus_search_idle(gpointer userdata) {
     App *app = userdata;
     VirtualKeyboard *keyboard = g_object_get_data(G_OBJECT(app->keyboard), "bookrelay-keyboard-state");
@@ -661,8 +670,9 @@ static gboolean focus_search_idle(gpointer userdata) {
          * Use the same order for search, after the icon release has finished. */
         virtual_keyboard_show_for(keyboard, GTK_ENTRY(app->query));
         keyboard->defer_search_open = FALSE;
-        gtk_window_set_focus(GTK_WINDOW(app->window), app->query);
-        gtk_widget_grab_focus(app->query);
+        /* The entry may still be GTK's logical focus from before the Kindle
+         * overlay took X focus. Re-enter it to activate its input method. */
+        refocus_search_entry(app);
         g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, focus_widget_idle,
                         g_object_ref(app->query), g_object_unref);
     } else {
@@ -2102,9 +2112,11 @@ static gboolean search_window_focus_in(GtkWidget *widget, GdkEventFocus *event, 
     /* Input methods send composed text to the focused entry, not necessarily
      * as key presses. Restore that focus when Kindle returns to our window. */
     if (!app->page_window && app->view == VIEW_SEARCH &&
-        GTK_WIDGET_MAPPED(app->query) && keyboard->native_open &&
-        gtk_window_get_focus(GTK_WINDOW(widget)) != app->query)
-        gtk_widget_grab_focus(app->query);
+        GTK_WIDGET_MAPPED(app->query) && keyboard->native_open) {
+        /* A returned X focus does not imply the entry's IM context has focus.
+         * GTK can still report this entry as focused after the overlay left. */
+        refocus_search_entry(app);
+    }
     return FALSE;
 }
 

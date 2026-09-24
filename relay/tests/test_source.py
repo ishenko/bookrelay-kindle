@@ -77,6 +77,24 @@ class FlibustaParserTests(unittest.TestCase):
                 FlibustaSource().subcategories('/opds/genres/A')
             self.assertEqual(fetch.call_count, 1)
 
+    def test_invalid_cover_link_does_not_break_book_page(self):
+        feed = (b'<feed xmlns="http://www.w3.org/2005/Atom">'
+                b'<entry><title>Readable Book</title>'
+                b'<link rel="http://opds-spec.org/acquisition/open-access" href="/b/123/epub" />'
+                b'<link rel="http://opds-spec.org/image/thumbnail" href="http://[broken/cover.jpg" />'
+                b'</entry></feed>')
+
+        class Source(FlibustaSource):
+            def _get(self, path):
+                return feed
+
+        books, more = Source().catalog_books('/opds/genres/A', '/opds/genres/A/1', 1, 12)
+        self.assertEqual([(book.id, book.title, book.cover_url) for book in books],
+                         [('123', 'Readable Book', '')])
+        self.assertFalse(more)
+        with self.assertRaises(ValueError):
+            Source().cover_path('123', 'http://[broken/cover.jpg')
+
     def test_truncated_catalog_connection_is_source_outage(self):
         class TruncatedResponse:
             def __enter__(self):

@@ -361,16 +361,25 @@ int main(int argc, char **argv) {
         drain_events();
         if (g_strcmp0(gtk_entry_get_text(GTK_ENTRY(app.query)), "ab") != 0)
             g_error("search did not recover from lost keyboard focus: text=%s focus=%p expected=%p", gtk_entry_get_text(GTK_ENTRY(app.query)), gtk_window_get_focus(GTK_WINDOW(app.window)), app.query);
-        gtk_window_set_focus(GTK_WINDOW(app.window), NULL);
         {
             GdkEventFocus returned = {0};
             gboolean handled = FALSE;
             returned.type = GDK_FOCUS_CHANGE;
             returned.in = TRUE;
+            /* Kindle can return X focus while GTK still believes the search
+             * entry has focus. The input method must be reactivated anyway. */
+            if (gtk_window_get_focus(GTK_WINDOW(app.window)) != app.query)
+                g_error("search lost logical focus before Kindle returned");
             g_signal_emit_by_name(app.window, "focus-in-event", &returned, &handled);
         }
         if (gtk_window_get_focus(GTK_WINDOW(app.window)) != app.query)
             g_error("search did not restore entry focus when Kindle returned to the window");
+        if (!gdk_test_simulate_key(app.query->window, 12, 12, GDK_c, 0, GDK_KEY_PRESS) ||
+            !gdk_test_simulate_key(app.query->window, 12, 12, GDK_c, 0, GDK_KEY_RELEASE))
+            g_error("could not type after Kindle returned");
+        drain_events();
+        if (g_strcmp0(gtk_entry_get_text(GTK_ENTRY(app.query)), "abc") != 0)
+            g_error("search input lost after Kindle returned: text=%s focus=%p expected=%p", gtk_entry_get_text(GTK_ENTRY(app.query)), gtk_window_get_focus(GTK_WINDOW(app.window)), app.query);
         snapshot(&app, argv[1], "search-native.png");
         gtk_widget_destroy(app.window);
         bookrelay_config_free(app.config);

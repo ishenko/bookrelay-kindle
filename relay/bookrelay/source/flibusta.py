@@ -1,7 +1,9 @@
 import html
 import http.client
+import json
 import re
 from collections import OrderedDict
+from pathlib import Path
 from urllib.error import HTTPError, URLError
 from threading import Lock
 from time import monotonic
@@ -104,9 +106,35 @@ def parse_search_page(page: str, base_url: str) -> list[Book]:
 
 
 class FlibustaSource:
-    def __init__(self, base_url: str = "https://flibusta.is", timeout: int = 12):
+    def __init__(self, base_url: str = "https://flibusta.is", timeout: int = 12,
+                 snapshot_path: Path | None = None):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self._snapshot_categories: list[dict[str, str]] | None = None
+        self._snapshot_subcategories: dict[str, list[dict[str, str]]] = {}
+        if snapshot_path is not None:
+            try:
+                groups = json.loads(snapshot_path.read_text(encoding="utf-8"))
+                categories = []
+                subcategories = {}
+                for group in groups:
+                    category = group["category"]
+                    category_id = category["id"]
+                    if not re.fullmatch(r"/opds/genres/[^/?#]+", category_id):
+                        raise ValueError("invalid category in catalog snapshot")
+                    items = group["subcategories"]
+                    if not all(re.fullmatch(re.escape(category_id) + r"/[^/?#]+", item["id"])
+                               for item in items):
+                        raise ValueError("invalid subcategory in catalog snapshot")
+                    categories.append({"id": category_id, "title": category["title"]})
+                    subcategories[category_id] = [{"id": item["id"], "title": item["title"]} for item in items]
+                if not categories or len(subcategories) != len(categories):
+                    raise ValueError("empty or duplicate catalog snapshot")
+                self._snapshot_categories = categories
+                self._snapshot_subcategories = subcategories
+            except (OSError, ValueError, KeyError, TypeError):
+                # An absent or damaged snapshot must never break the live OPDS path.
+                pass
         self._feed_cache: OrderedDict[str, tuple[float, bytes]] = OrderedDict()
         self._feed_cache_bytes = 0
         self._feed_cache_lock = Lock()
@@ -256,12 +284,16 @@ class FlibustaSource:
         return books_seen[start:start + size], len(books_seen) > start + size or bool(path)
 
     def categories(self) -> list[dict[str, str]]:
+        if self._snapshot_categories is not None:
+            return [item.copy() for item in self._snapshot_categories]
         sections, _, _ = parse_opds_feed(self._catalog_feed("/opds/genres"), self.base_url)
         return sections
 
     def subcategories(self, category: str) -> list[dict[str, str]]:
         if not re.fullmatch(r"/opds/genres/[^/?#]+", category):
             raise ValueError("unknown category")
+        if category in self._snapshot_subcategories:
+            return [item.copy() for item in self._snapshot_subcategories[category]]
         sections, _, _ = parse_opds_feed(self._catalog_feed(category), self.base_url)
         return sections
 

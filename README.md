@@ -33,6 +33,8 @@ Set BOOKRELAY_PAIRING_ADMIN_KEY to a long random secret. BOOKRELAY_DEFAULT_KINDL
 
 The relay listens on port 8000 by default. Put it behind HTTPS before using it from a Kindle. A reverse proxy such as Caddy or nginx should terminate TLS and limit access to the pairing page and API as appropriate.
 
+The standard Flibusta relay image includes a snapshot of 24 categories and 271 subcategories, so navigation does not wait for Flibusta. Book lists, search, covers, and EPUB files still come from the live source. Update the snapshot when the source changes its categories.
+
 SQLite is the default database. The container stores it in the relay-data volume. A PostgreSQL adapter is intentionally left for a later scale-out change.
 
 ## Kindle installation
@@ -58,7 +60,7 @@ After a new GitHub Release, update the installed package with:
 
 To prepare the package offline, copy the whole bookrelay-kpm folder from the
 release files to the Kindle USB root. It must contain manifest.json and
-packages/bookrelay-kindle_0.1.19_kindlehf.kpkg. Then run:
+packages/bookrelay-kindle_0.1.20_kindlehf.kpkg. Then run:
 
     kpm add-repo file:///mnt/us/bookrelay-kpm/manifest.json
     kpm update

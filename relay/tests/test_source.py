@@ -1,5 +1,8 @@
 import unittest
+import json
 from http.client import IncompleteRead
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from urllib.error import HTTPError
 from unittest.mock import patch
 
@@ -7,6 +10,31 @@ from bookrelay.source.flibusta import FlibustaSource, SourceUnavailable, parse_o
 
 
 class FlibustaParserTests(unittest.TestCase):
+    def test_packaged_catalog_snapshot_serves_navigation_without_source(self):
+        snapshot = Path(__file__).parents[2] / 'client/share/subcategories.json'
+        source = FlibustaSource(snapshot_path=snapshot)
+        with patch.object(source, '_get', side_effect=AssertionError('OPDS navigation requested')):
+            categories = source.categories()
+            self.assertEqual(len(categories), 24)
+            self.assertEqual(sum(len(source.subcategories(item['id'])) for item in categories), 271)
+            categories[0]['title'] = 'mutated by caller'
+            self.assertNotEqual(source.categories()[0]['title'], 'mutated by caller')
+        with self.assertRaises(ValueError):
+            source.subcategories('/opds/genres/A/../../other')
+
+    def test_invalid_snapshot_falls_back_to_live_catalog(self):
+        with TemporaryDirectory() as directory:
+            snapshot = Path(directory) / 'snapshot.json'
+            snapshot.write_text(json.dumps([{'category': {'id': '/opds/genres/A', 'title': 'A'},
+                                            'subcategories': [{'id': '/elsewhere', 'title': 'bad'}]}]))
+            class LiveSource(FlibustaSource):
+                def _get(self, path):
+                    return (b'<feed xmlns="http://www.w3.org/2005/Atom">'
+                            b'<entry><title>Live</title><link rel="subsection" '
+                            b'type="application/atom+xml;profile=opds-catalog" '
+                            b'href="/opds/genres/Live" /></entry></feed>')
+            self.assertEqual(LiveSource(snapshot_path=snapshot).categories()[0]['title'], 'Live')
+
     def test_transient_upstream_failure_retries_catalog_and_streamed_books(self):
         feed = (b'<feed xmlns="http://www.w3.org/2005/Atom">'
                 b'<entry><title>Book</title><link rel="http://opds-spec.org/acquisition/open-access" '

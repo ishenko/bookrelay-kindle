@@ -173,7 +173,12 @@ def create_app(db_path: Path | str | None = None, source=None, mailer=None, pair
     if delivery_enabled is None:
         delivery_enabled = os.getenv("BOOKRELAY_DELIVERY_ENABLED", "true").lower() == "true"
     root = Path(db_path or os.getenv("BOOKRELAY_DB", "./data/relay.sqlite3"))
-    source = source or FlibustaSource(os.getenv("BOOKRELAY_SOURCE_URL", "https://flibusta.is"))
+    source_url = os.getenv("BOOKRELAY_SOURCE_URL", "https://flibusta.is")
+    source = source or FlibustaSource(
+        source_url,
+        snapshot_path=Path(__file__).resolve().parents[2] / "client/share/subcategories.json"
+        if source_url.rstrip("/") == "https://flibusta.is" else None,
+    )
     if mailer is None:
         mailer = SmtpMailer(
             host=os.getenv("BOOKRELAY_SMTP_HOST", "localhost"),

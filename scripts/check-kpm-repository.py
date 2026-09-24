@@ -59,7 +59,7 @@ def main():
     parser = argparse.ArgumentParser(description="Validate the BookRelay KPM repository manifest")
     parser.add_argument("--repository-manifest", type=Path, default=Path("kpm/manifest.json"))
     parser.add_argument("--package-manifest", type=Path, default=Path("packaging/kpm/manifest.json"))
-    parser.add_argument("--release-tag", default="v0.1.19")
+    parser.add_argument("--release-tag", default="v0.1.20")
     args = parser.parse_args()
 
     try:

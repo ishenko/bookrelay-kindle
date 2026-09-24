@@ -652,13 +652,17 @@ static gboolean focus_widget_idle(gpointer userdata) {
 static gboolean focus_search_idle(gpointer userdata) {
     App *app = userdata;
     if (!app->page_window && app->view == VIEW_SEARCH && GTK_WIDGET_MAPPED(app->query)) {
-        /* Finish the icon's button-release before LIPC takes X focus. The
-         * setup page already opens the keyboard after its entry is mapped. */
+        /* Match the working setup fields: focus the entry before LIPC opens,
+         * then restore focus after the overlay has been requested. */
+        gtk_window_set_focus(GTK_WINDOW(app->window), app->query);
+        gtk_widget_grab_focus(app->query);
         virtual_keyboard_show_for(g_object_get_data(G_OBJECT(app->keyboard),
                                                     "bookrelay-keyboard-state"),
                                   GTK_ENTRY(app->query));
         gtk_window_set_focus(GTK_WINDOW(app->window), app->query);
         gtk_widget_grab_focus(app->query);
+        g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, focus_widget_idle,
+                        g_object_ref(app->query), g_object_unref);
     }
     return FALSE;
 }

@@ -45,12 +45,12 @@ static gboolean count_search_focus_in(GtkWidget *widget, GdkEventFocus *event, g
     return FALSE;
 }
 
-static gboolean expect_search_keyboard_before_focus(GtkWidget *widget, GdkEventFocus *event, gpointer userdata) {
+static gboolean expect_search_focus_before_keyboard(GtkWidget *widget, GdkEventFocus *event, gpointer userdata) {
     App *app = userdata;
     VirtualKeyboard *keyboard = g_object_get_data(G_OBJECT(app->keyboard), "bookrelay-keyboard-state");
     if (!first_search_focus_seen) {
-        if (!keyboard->native_open)
-            g_error("search focused before the Kindle keyboard opened");
+        if (keyboard->native_open)
+            g_error("Kindle keyboard opened before the inline search entry was focused");
         first_search_focus_seen = TRUE;
     }
     return FALSE;
@@ -348,7 +348,7 @@ int main(int argc, char **argv) {
         app.catalog_ready = TRUE;
         search_keyboard = g_object_get_data(G_OBJECT(app.keyboard), "bookrelay-keyboard-state");
         /* Exercise the production focus handler, including the icon path. */
-        g_signal_connect_after(app.query, "focus-in-event", G_CALLBACK(expect_search_keyboard_before_focus), &app);
+        g_signal_connect_after(app.query, "focus-in-event", G_CALLBACK(expect_search_focus_before_keyboard), &app);
         g_signal_connect(app.query, "focus-out-event", G_CALLBACK(count_search_focus_out), NULL);
         g_signal_connect(app.query, "focus-in-event", G_CALLBACK(count_search_focus_in), NULL);
         g_signal_connect(app.search_icon, "event-after", G_CALLBACK(expect_search_keyboard_deferred), &app);

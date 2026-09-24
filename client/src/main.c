@@ -653,18 +653,31 @@ static gboolean focus_widget_idle(gpointer userdata) {
     return FALSE;
 }
 
+static gboolean open_search_keyboard_idle(gpointer userdata) {
+    App *app = userdata;
+    VirtualKeyboard *keyboard = g_object_get_data(G_OBJECT(app->keyboard), "bookrelay-keyboard-state");
+    if (!app->page_window && app->view == VIEW_SEARCH && GTK_WIDGET_MAPPED(app->query) &&
+        gtk_window_get_focus(GTK_WINDOW(app->window)) == app->query) {
+        /* Kindle snapshots the active GTK input target when LIPC opens its
+         * keyboard. Let the focus change finish in the previous main-loop
+         * iteration, as it does for the working settings entries. */
+        virtual_keyboard_show_for(keyboard, GTK_ENTRY(app->query));
+    }
+    keyboard->defer_search_open = FALSE;
+    return FALSE;
+}
+
 static gboolean focus_search_idle(gpointer userdata) {
     App *app = userdata;
     VirtualKeyboard *keyboard = g_object_get_data(G_OBJECT(app->keyboard), "bookrelay-keyboard-state");
     if (!app->page_window && app->view == VIEW_SEARCH && GTK_WIDGET_MAPPED(app->query)) {
-        keyboard->defer_search_open = FALSE;
-        /* The inline entry must own GTK/IME focus before Kindle's keyboard
-         * snapshots the active input target. Do not refocus after opening:
-         * that resets an in-progress native composition. */
-        virtual_keyboard_show_for(keyboard, GTK_ENTRY(app->query));
-    } else {
-        keyboard->defer_search_open = FALSE;
+        gtk_widget_grab_focus(app->query);
+        if (gtk_window_get_focus(GTK_WINDOW(app->window)) == app->query) {
+            g_idle_add(open_search_keyboard_idle, app);
+            return FALSE;
+        }
     }
+    keyboard->defer_search_open = FALSE;
     return FALSE;
 }
 
@@ -1398,13 +1411,19 @@ static void search_page(App *app, guint page) {
     gtk_widget_hide(app->header_title);
     gtk_widget_show(app->search_row);
     gtk_label_set_text(GTK_LABEL(app->section_title), "Результаты поиска");
+    clear_results(app);
+    render_empty_state(app, "Ищем книги…");
     update_pager(app);
     task = async_task_new(app, TASK_SEARCH);
     copy_common_task_fields(task, app);
     task->query = g_strdup(query ? query : "");
     task->page = page;
     task->size = items_per_page(app);
-    start_async_task(task);
+    if (!start_async_task(task)) {
+        clear_results(app);
+        render_empty_state(app, "Поиск не запустился. Повторите попытку.");
+        set_status(app, "Не удалось запустить поиск");
+    }
 }
 
 static void search_entry_activate(GtkEntry *entry, gpointer userdata) { search_page((App *)userdata, 1); }
@@ -1744,6 +1763,9 @@ static gboolean async_task_complete(gpointer userdata) {
         case TASK_SEARCH:
             if (task->generation != app->generation || app->view != VIEW_SEARCH) break;
             if (!task->books) {
+                clear_results(app);
+                render_empty_state(app, "Поиск не выполнен. Повторите попытку.");
+                update_pager(app);
                 show_error(app, "Поиск не выполнен", task->error);
             } else {
                 app->page = task->page;

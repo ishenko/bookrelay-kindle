@@ -406,13 +406,12 @@ int main(int argc, char **argv) {
             guint focus_in_before = search_focus_in_count;
             returned.type = GDK_FOCUS_CHANGE;
             returned.in = TRUE;
-            /* Kindle can return X focus while GTK still believes the search
-             * entry has focus. The input method must be reactivated anyway. */
+            /* Returning X focus must preserve the active entry composition. */
             if (gtk_window_get_focus(GTK_WINDOW(app.window)) != app.query)
                 g_error("search lost logical focus before Kindle returned");
             g_signal_emit_by_name(app.window, "focus-in-event", &returned, &handled);
-            if (search_focus_out_count <= focus_out_before || search_focus_in_count <= focus_in_before)
-                g_error("Kindle return did not reactivate the search entry input method");
+            if (search_focus_out_count != focus_out_before || search_focus_in_count != focus_in_before)
+                g_error("Kindle return unnecessarily reset the search input method");
         }
         if (gtk_window_get_focus(GTK_WINDOW(app.window)) != app.query)
             g_error("search did not restore entry focus when Kindle returned to the window");

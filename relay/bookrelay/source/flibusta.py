@@ -346,8 +346,10 @@ class FlibustaSource:
         # separately; the book id and origin must still match.
         image_folder = re.fullmatch(rf"/i/[0-9]{{1,2}}/{re.escape(book_id)}/(.+)", cover.path)
         direct_cover = re.fullmatch(rf"/covers/{re.escape(book_id)}\.(?:jpg|jpeg|png)", cover.path, re.I)
+        # An OPDS archive image id need not match the book id.
+        archive_cover = re.fullmatch(r"/ib/[0-9]{1,3}/[0-9]{1,9}/cover\.(?:jpg|jpeg|png)", cover.path, re.I)
         parts = image_folder.group(1).split("/") if image_folder else []
-        if (cover.query or cover.fragment or not (image_folder or direct_cover) or
+        if (cover.query or cover.fragment or not (image_folder or direct_cover or archive_cover) or
                 (image_folder and (len(parts) > 6 or len(cover.path) > 256 or
                                    any(part in (".", "..") or
                                        not re.fullmatch(r"[A-Za-z0-9._-]{1,96}", part)

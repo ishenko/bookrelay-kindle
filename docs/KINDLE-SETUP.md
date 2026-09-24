@@ -12,7 +12,7 @@ Set the following values in Dokploy before pairing:
     BOOKRELAY_SMTP_*=<SMTP settings>
     BOOKRELAY_DELIVERY_ENABLED=true
 
-The relay sends EPUB as an email attachment. Amazon's processing and delivery time is outside the application's control; the client reports that the relay accepted or sent the job.
+The relay sends an EPUB or PDF email attachment, depending on what the source provides. Amazon's processing and delivery time is outside the application's control; the client reports that the relay accepted or sent the job.
 
 ## Install
 

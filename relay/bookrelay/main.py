@@ -1,5 +1,8 @@
 import json
+import hashlib
+import hmac
 import os
+import re
 import secrets
 from pathlib import Path
 from urllib.parse import quote
@@ -202,6 +205,13 @@ def create_app(db_path: Path | str | None = None, source=None, mailer=None, pair
         return JSONResponse(status_code=503, content={"detail": str(exc)})
     app.state.limiter = limiter
     app.state.default_kindle_email = default_email
+    # Archive image ids do not encode the book id. Authenticate the exact
+    # book/path pair returned by OPDS rather than accepting arbitrary /ib URLs.
+    cover_key = (hashlib.sha256(b"bookrelay-cover-v1\0" + admin_key.encode()).digest()
+                 if admin_key else secrets.token_bytes(32))
+
+    def cover_signature(book_id: str, path: str) -> str:
+        return hmac.new(cover_key, f"{book_id}\0{path}".encode(), hashlib.sha256).hexdigest()
 
     def require_device(authorization: str | None):
         device = pairing.authenticate(_token(authorization))
@@ -222,7 +232,10 @@ def create_app(db_path: Path | str | None = None, source=None, mailer=None, pair
             except ValueError:
                 data["cover_url"] = ""
             else:
-                data["cover_url"] = f"/v1/books/{book.id}/cover?path={quote(path, safe='')}"
+                url = f"/v1/books/{book.id}/cover?path={quote(path, safe='')}"
+                if path.startswith("/ib/"):
+                    url += f"&sig={cover_signature(book.id, path)}"
+                data["cover_url"] = url
         return data
 
     @app.get("/healthz")
@@ -279,10 +292,13 @@ def create_app(db_path: Path | str | None = None, source=None, mailer=None, pair
         return {"items": [serialize_book(book) for book in books], "page": page, "query": q, "category": category, "has_next": has_next}
 
     @app.get("/v1/books/{book_id}/cover")
-    def book_cover(request: Request, book_id: str, path: str = Query(max_length=256), authorization: str | None = Header(default=None)):
+    def book_cover(request: Request, book_id: str, path: str = Query(max_length=256), sig: str = Query(default="", max_length=64), authorization: str | None = Header(default=None)):
         limit(request, "book-cover", 120, 60)
         require_device(authorization)
         if not isinstance(source, FlibustaSource):
+            raise HTTPException(status_code=404, detail="cover unavailable")
+        if path.startswith("/ib/") and (not re.fullmatch(r"[0-9a-f]{64}", sig) or
+                                          not hmac.compare_digest(sig, cover_signature(book_id, path))):
             raise HTTPException(status_code=404, detail="cover unavailable")
         try:
             payload = source.download_cover(book_id, path)

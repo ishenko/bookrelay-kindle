@@ -95,7 +95,8 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             def catalog_books(self, category, subcategory, page=1, size=6):
                 return [Book(id="451198", title="A Book", cover_url="https://flibusta.is/i/98/451198/img_12"),
                         Book(id="123", title="Another Book", cover_url="https://flibusta.is/covers/123.jpg"),
-                        Book(id="756694", title="Nested Book", cover_url="https://flibusta.is/i/94/756694/OEBPS/Images/x0000.jpg.jpg")], False
+                        Book(id="756694", title="Nested Book", cover_url="https://flibusta.is/i/94/756694/OEBPS/Images/x0000.jpg.jpg"),
+                        Book(id="326334", title="Archive Book", cover_url="https://flibusta.is/ib/5/195905/cover.jpg")], False
 
             def _get(self, path):
                 self.cover_requests.append(path)
@@ -127,9 +128,18 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("/v1/books/756694/cover?path=", nested_url)
                 self.assertEqual((await client.get(nested_url, headers=headers)).status_code, 200)
                 self.assertEqual(source.cover_requests[-1], "/i/94/756694/OEBPS/Images/x0000.jpg.jpg")
+                archive_url = catalog.json()["items"][3]["cover_url"]
+                self.assertIn("path=%2Fib%2F5%2F195905%2Fcover.jpg&sig=", archive_url)
+                self.assertEqual((await client.get(archive_url, headers=headers)).status_code, 200)
+                self.assertEqual(source.cover_requests[-1], "/ib/5/195905/cover.jpg")
+                for tampered in (archive_url.replace("326334", "326335"),
+                                 archive_url.replace("195905", "195906"),
+                                 "/v1/books/326334/cover?path=%2Fib%2F5%2F195905%2Fcover.jpg"):
+                    self.assertEqual((await client.get(tampered, headers=headers)).status_code, 404)
+                self.assertEqual(len(source.cover_requests), 4)
                 rejected = await client.get("/v1/books/451198/cover", params={"path": "//elsewhere.test/secret"}, headers=headers)
                 self.assertEqual(rejected.status_code, 404)
-                self.assertEqual(len(source.cover_requests), 3)
+                self.assertEqual(len(source.cover_requests), 4)
 
     async def test_pair_page_shows_remaining_time_from_server_clock(self):
         with tempfile.TemporaryDirectory() as tmp:

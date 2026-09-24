@@ -1924,14 +1924,14 @@ static gboolean async_task_complete(gpointer userdata) {
                 poll->attempts++;
                 if (!task->state && poll->attempts < 20) break;
                 if (!task->state) delivery_progress(app, "Не удалось получить статус доставки. Проверьте relay.");
-                else if (g_strcmp0(task->state, "sent") == 0) delivery_progress(app, "EPUB принят почтовым сервером. Если книга не появилась на Kindle, проверьте разрешённый адрес отправителя в Amazon и почту Kindle в настройках.");
+                else if (g_strcmp0(task->state, "sent") == 0) delivery_progress(app, "Файл книги принят почтовым сервером. Если книга не появилась на Kindle, проверьте разрешённый адрес отправителя в Amazon и почту Kindle в настройках.");
                 else if (g_strcmp0(task->state, "failed") == 0) {
-                    gchar *message = g_strdup_printf("Не удалось отправить EPUB: %s", task->error ? task->error->message : "проверьте задание на сервере");
+                    gchar *message = g_strdup_printf("Не удалось отправить книгу: %s", task->error ? task->error->message : "проверьте задание на сервере");
                     delivery_progress(app, message);
                     g_free(message);
                 }
                 else if (poll->attempts < 20) {
-                    delivery_progress(app, g_strcmp0(task->state, "sending") == 0 ? "EPUB отправляется…" : "Книга скачивается…");
+                    delivery_progress(app, g_strcmp0(task->state, "sending") == 0 ? "Книга отправляется…" : "Книга скачивается…");
                     break;
                 } else delivery_progress(app, "Задание всё ещё выполняется. Проверьте его на сервере позже.");
                 if (poll->source_id) g_source_remove(poll->source_id);
@@ -2109,16 +2109,12 @@ static gboolean search_window_key_press(GtkWidget *widget, GdkEventKey *event, g
 static gboolean search_window_focus_in(GtkWidget *widget, GdkEventFocus *event, gpointer userdata) {
     App *app = userdata;
     VirtualKeyboard *keyboard = g_object_get_data(G_OBJECT(app->keyboard), "bookrelay-keyboard-state");
-    /* Input methods send composed text to the focused entry, not necessarily
-     * as key presses. Restore that focus when Kindle returns to our window. */
+    /* Match the working settings fields: preserve the entry and its input
+     * method while Kindle's keyboard briefly owns X focus. Resetting an
+     * already-focused entry to NULL discards the active composition. */
     if (!app->page_window && app->view == VIEW_SEARCH &&
-        GTK_WIDGET_MAPPED(app->query) && keyboard->native_open) {
-        /* Kindle's input overlay can return X focus while GtkWindow still
-         * reports the entry as focused. In that case GtkEntry never receives
-         * another focus-in, so its input method stays inactive even though
-         * the system keyboard is visible. Force a real focus transition. */
-        if (gtk_window_get_focus(GTK_WINDOW(widget)) == app->query)
-            gtk_window_set_focus(GTK_WINDOW(widget), NULL);
+        GTK_WIDGET_MAPPED(app->query) && keyboard->native_open &&
+        gtk_window_get_focus(GTK_WINDOW(widget)) != app->query) {
         refocus_search_entry(app);
     }
     return FALSE;

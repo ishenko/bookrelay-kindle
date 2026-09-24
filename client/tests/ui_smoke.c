@@ -258,13 +258,26 @@ int main(int argc, char **argv) {
         if (g_strcmp0(gtk_entry_get_text(GTK_ENTRY(app.query)), "test bookx") != 0)
             g_error("search lost key after Kindle restored window focus");
         gtk_entry_set_text(GTK_ENTRY(app.query), "test book");
-        /* Some Kindle touch paths deliver a press without a release. Search
-         * must still submit the query after that tap. */
+        /* A touch press without a release may reopen the keyboard, but must
+         * never send a search before Enter. */
         if (!gdk_test_simulate_button(app.search_icon->window,
                                       app.search_icon->allocation.x + app.search_icon->allocation.width / 2,
                                       app.search_icon->allocation.y + app.search_icon->allocation.height / 2,
                                       1, 0, GDK_BUTTON_PRESS))
-            g_error("could not press search icon to submit");
+            g_error("could not press search icon to focus");
+        {
+            gint64 deadline = g_get_monotonic_time() + G_USEC_PER_SEC / 2;
+            while (g_get_monotonic_time() < deadline) {
+                drain_events();
+                g_usleep(10000);
+            }
+        }
+        if (app.active_tasks || find_data_button(app.results, "book-row") ||
+            gtk_window_get_focus(GTK_WINDOW(app.window)) != app.query)
+            g_error("search icon submitted before Enter or lost focus");
+        if (!gdk_test_simulate_key(app.query->window, 12, 12, GDK_Return, 0, GDK_KEY_PRESS) ||
+            !gdk_test_simulate_key(app.query->window, 12, 12, GDK_Return, 0, GDK_KEY_RELEASE))
+            g_error("could not press Enter to search");
         {
             gint64 deadline = g_get_monotonic_time() + 10 * G_USEC_PER_SEC;
             while ((!find_data_button(app.results, "book-row") || app.active_tasks) &&
@@ -279,7 +292,7 @@ int main(int argc, char **argv) {
             BookRow *row = result ? g_object_get_data(G_OBJECT(result), "book-row") : NULL;
             if (app.active_tasks || app.view != VIEW_SEARCH || !app.has_next || !row ||
                 row->book->year != 2022 || g_strcmp0(row->book->title, "A Book") != 0)
-                g_error("search icon did not load results from the relay (tasks=%u view=%u ready=%d row=%p status=%s)",
+                g_error("search Enter did not load results from the relay (tasks=%u view=%u ready=%d row=%p status=%s)",
                         app.active_tasks, app.view, app.catalog_ready, row, gtk_label_get_text(GTK_LABEL(app.status)));
         }
         if (!gdk_test_simulate_button(app.search_icon->window,
@@ -289,6 +302,33 @@ int main(int argc, char **argv) {
             g_error("could not deliver late release to search icon");
         drain_events();
         if (app.active_tasks) g_error("late release sent a duplicate search");
+        tap_search_icon(&app);
+        search_keyboard = g_object_get_data(G_OBJECT(app.keyboard), "bookrelay-keyboard-state");
+        if (gtk_window_get_focus(GTK_WINDOW(app.window)) != app.query ||
+            (g_getenv("BOOKRELAY_TEST_NATIVE_SEARCH") && !search_keyboard->native_open))
+            g_error("second search did not reopen the input keyboard");
+        if (!gdk_test_simulate_key(app.query->window, 12, 12, GDK_y, 0, GDK_KEY_PRESS) ||
+            !gdk_test_simulate_key(app.query->window, 12, 12, GDK_y, 0, GDK_KEY_RELEASE))
+            g_error("could not type the second search query");
+        drain_events();
+        if (g_strcmp0(gtk_entry_get_text(GTK_ENTRY(app.query)), "y") ||
+            app.active_tasks || !find_data_button(app.results, "book-row"))
+            g_error("second query submitted before Enter or failed to replace the first");
+        if (!gdk_test_simulate_key(app.query->window, 12, 12, GDK_Return, 0, GDK_KEY_PRESS) ||
+            !gdk_test_simulate_key(app.query->window, 12, 12, GDK_Return, 0, GDK_KEY_RELEASE))
+            g_error("could not submit second search with Enter");
+        {
+            gint64 deadline = g_get_monotonic_time() + 10 * G_USEC_PER_SEC;
+            while (app.active_tasks && g_get_monotonic_time() < deadline) {
+                drain_events();
+                g_usleep(10000);
+            }
+        }
+        drain_events();
+        if (app.active_tasks || !find_data_button(app.results, "book-row") ||
+            (g_getenv("BOOKRELAY_TEST_NATIVE_SEARCH") && search_keyboard->native_open))
+            g_error("second search did not return results or close the keyboard");
+        snapshot(&app, argv[1], "search-results-repeat.png");
         if (g_getenv("BOOKRELAY_TEST_NATIVE_SEARCH")) {
             gint64 deadline;
             search_keyboard = g_object_get_data(G_OBJECT(app.keyboard), "bookrelay-keyboard-state");

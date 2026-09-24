@@ -663,6 +663,7 @@ static gboolean open_search_keyboard_idle(gpointer userdata) {
         gtk_window_set_focus(GTK_WINDOW(app->window), app->query);
         g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, focus_widget_idle,
                         g_object_ref(app->query), g_object_unref);
+        gtk_editable_select_region(GTK_EDITABLE(app->query), 0, -1);
     }
     keyboard->defer_search_open = FALSE;
     return FALSE;
@@ -1974,23 +1975,21 @@ static void search_icon_clicked(GtkButton *button, gpointer userdata) {
         show_setup_if_needed(app);
         return;
     }
-    if (GTK_WIDGET_VISIBLE(app->search_row) && *gtk_entry_get_text(GTK_ENTRY(app->query))) {
-        search_page(app, 1);
-        return;
+    if (app->view != VIEW_SEARCH || !GTK_WIDGET_VISIBLE(app->search_row)) {
+        app->view = VIEW_SEARCH;
+        app->page = 1;
+        app->has_next = FALSE;
+        advance_generation(app);
+        gtk_label_set_text(GTK_LABEL(app->section_title), "Поиск книг");
+        gtk_widget_hide(app->breadcrumb_row);
+        clear_results(app);
+        render_empty_state(app, "Введите запрос");
+        update_pager(app);
+        gtk_widget_hide(app->header_title);
+        gtk_widget_show(app->search_row);
     }
-    app->view = VIEW_SEARCH;
-    app->page = 1;
-    app->has_next = FALSE;
-    advance_generation(app);
     ((VirtualKeyboard *)g_object_get_data(G_OBJECT(app->keyboard),
                                           "bookrelay-keyboard-state"))->defer_search_open = TRUE;
-    gtk_label_set_text(GTK_LABEL(app->section_title), "Поиск книг");
-    gtk_widget_hide(app->breadcrumb_row);
-    clear_results(app);
-    render_empty_state(app, "Введите запрос");
-    update_pager(app);
-    gtk_widget_hide(app->header_title);
-    gtk_widget_show(app->search_row);
     /* Like settings, open LIPC before focusing the entry, after the icon
      * event so its background handler cannot close the keyboard. */
     g_idle_add(open_search_keyboard_idle, app);

@@ -9,7 +9,7 @@ cc -std=c11 -O0 -w $(pkg-config --cflags gtk+-2.0 libcurl gthread-2.0 gdk-pixbuf
   client/tests/ui_smoke.c client/src/api.c client/src/config.c client/src/favorites.c \
   -o "$output_dir/ui-smoke" \
   $(pkg-config --libs gtk+-2.0 libcurl gthread-2.0 gdk-pixbuf-2.0)
-python3 client/tests/test_ui_pairing.py "$output_dir/ui-smoke"
+BOOKRELAY_TEST_SCREENSHOT_DIR="$output_dir/1264x1680" python3 client/tests/test_ui_pairing.py "$output_dir/ui-smoke"
 xvfb-run -a -s '-screen 0 1264x1680x24' "$output_dir/ui-smoke" "$output_dir/1264x1680"
 xvfb-run -a -s '-screen 0 758x1024x24' "$output_dir/ui-smoke" "$output_dir/758x1024"
 BOOKRELAY_TEST_DPI=300 xvfb-run -a -s '-screen 0 1264x1680x24' "$output_dir/ui-smoke" "$output_dir/1264x1680-300dpi"
@@ -29,4 +29,4 @@ BOOKRELAY_TEST_DPI=300 BOOKRELAY_TEST_NATIVE=1 BOOKRELAY_KEYBOARD=kindle \
   xvfb-run -a -s '-screen 0 1264x1680x24' "$output_dir/ui-smoke" "$output_dir/native-keyboard"
 grep -Fqx -- '-s com.lab126.keyboard open bookrelay.kindle:abc:0' "$output_dir/lipc-trace.txt"
 grep -Fqx -- '-s com.lab126.keyboard close bookrelay.kindle' "$output_dir/lipc-trace.txt"
-BOOKRELAY_TEST_NATIVE_SEARCH=1 BOOKRELAY_KEYBOARD=kindle BOOKRELAY_LIPC_SET_PROP="$output_dir/lipc-mock.sh" BOOKRELAY_LIPC_TRACE="$output_dir/lipc-trace.txt" python3 client/tests/test_ui_pairing.py "$output_dir/ui-smoke"
+BOOKRELAY_TEST_SCREENSHOT_DIR="$output_dir/native-keyboard" BOOKRELAY_TEST_NATIVE_SEARCH=1 BOOKRELAY_KEYBOARD=kindle BOOKRELAY_LIPC_SET_PROP="$output_dir/lipc-mock.sh" BOOKRELAY_LIPC_TRACE="$output_dir/lipc-trace.txt" python3 client/tests/test_ui_pairing.py "$output_dir/ui-smoke"

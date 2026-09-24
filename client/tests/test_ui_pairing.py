@@ -2,6 +2,7 @@
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -65,6 +66,10 @@ def main(binary: Path) -> None:
             )
             if result.returncode:
                 raise AssertionError(f"GTK test failed ({result.returncode}): {result.stderr}\n{result.stdout}")
+            screenshots = os.getenv("BOOKRELAY_TEST_SCREENSHOT_DIR")
+            if screenshots:
+                Path(screenshots).mkdir(parents=True, exist_ok=True)
+                shutil.copy2(Path(directory) / "search-results-repeat.png", Path(screenshots))
     finally:
         server.shutdown()
         server.server_close()
@@ -79,7 +84,10 @@ def main(binary: Path) -> None:
     assert len([request for request in requests if request == ("GET", "/v1/categories", None)]) == 2, requests
     searches = [parse_qs(urlsplit(path).query) for method, path, _ in requests
                 if method == "GET" and urlsplit(path).path == "/v1/search"]
-    expected = [{"q": ["test book"], "page": ["1"], "size": ["12"]}]
+    expected = [
+        {"q": ["test book"], "page": ["1"], "size": ["12"]},
+        {"q": ["y"], "page": ["1"], "size": ["12"]},
+    ]
     if os.getenv("BOOKRELAY_TEST_NATIVE_SEARCH"):
         expected.append({"q": ["z"], "page": ["1"], "size": ["12"]})
     assert searches == expected, requests

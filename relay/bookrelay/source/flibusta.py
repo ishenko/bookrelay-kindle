@@ -242,9 +242,14 @@ class FlibustaSource:
                             self._book_cache.popitem(last=False)
                 return books, next_link
             except (HTTPError, URLError, OSError, TimeoutError, http.client.HTTPException) as exc:
-                if stale and retryable_source_error(exc):
+                # A slow OPDS book/search feed may time out once and answer on
+                # the next connection. Use a verified older page immediately
+                # when available; otherwise retry the request once.
+                reason = exc.reason if isinstance(exc, URLError) else exc
+                retryable = retryable_source_error(exc) or isinstance(reason, (TimeoutError, socket.timeout))
+                if stale and retryable:
                     return stale
-                if attempt or not retryable_source_error(exc):
+                if attempt or not retryable:
                     raise SourceUnavailable("Flibusta did not respond; please retry") from exc
 
     def _stream_book_feed(self, path: str, needed: int) -> tuple[list[Book], str | None, bool]:

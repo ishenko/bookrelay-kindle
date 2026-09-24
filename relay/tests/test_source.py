@@ -78,7 +78,7 @@ class FlibustaParserTests(unittest.TestCase):
                 FlibustaSource().subcategories('/opds/genres/A')
             self.assertEqual(fetch.call_count, 1)
 
-    def test_upstream_timeout_does_not_double_catalog_or_book_wait(self):
+    def test_upstream_timeout_retries_book_feed_once_but_not_navigation(self):
         for failure in (TimeoutError('timed out'), URLError(TimeoutError('timed out'))):
             with self.subTest(failure=type(failure).__name__):
                 with patch('bookrelay.source.flibusta.urlopen', side_effect=failure) as fetch:
@@ -88,7 +88,32 @@ class FlibustaParserTests(unittest.TestCase):
                 with patch('bookrelay.source.flibusta.urlopen', side_effect=failure) as fetch:
                     with self.assertRaises(SourceUnavailable):
                         FlibustaSource().catalog_books('/opds/genres/A', '/opds/genres/A/1', 1, 12)
-                    self.assertEqual(fetch.call_count, 1)
+                    self.assertEqual(fetch.call_count, 2)
+
+    def test_book_feed_recovers_from_one_timeout(self):
+        feed = (b'<feed xmlns="http://www.w3.org/2005/Atom">'
+                b'<entry><title>Book</title><link rel="http://opds-spec.org/acquisition/open-access" '
+                b'href="/b/123/epub" /></entry></feed>')
+
+        class Response:
+            def __init__(self):
+                self.reads = 0
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read1(self, limit):
+                self.reads += 1
+                return feed if self.reads == 1 else b''
+
+        with patch('bookrelay.source.flibusta.urlopen', side_effect=[TimeoutError('timed out'), Response()]) as fetch:
+            books, more = FlibustaSource().search_page('Book', 1, 12)
+        self.assertEqual([book.id for book in books], ['123'])
+        self.assertFalse(more)
+        self.assertEqual(fetch.call_count, 2)
 
     def test_invalid_cover_link_does_not_break_book_page(self):
         feed = (b'<feed xmlns="http://www.w3.org/2005/Atom">'
@@ -490,6 +515,20 @@ class FlibustaParserTests(unittest.TestCase):
             with self.assertRaises(SourceUnavailable):
                 source.catalog_books(category, subcategory, 2, 12)
         self.assertEqual(fetch.call_count, 2)
+
+    def test_expired_book_page_survives_timeout_without_a_second_wait(self):
+        source = FlibustaSource()
+        path = '/opds/genres/A/1'
+        feed = (b'<feed xmlns="http://www.w3.org/2005/Atom">' +
+                b''.join(f'<entry><title>Book {i}</title><link rel="http://opds-spec.org/acquisition/open-access" href="/b/{i}/epub" /></entry>'.encode()
+                         for i in range(13)) + b'</feed>')
+        _, books, _ = parse_opds_feed(feed, source.base_url)
+        source._book_cache[path] = (monotonic() - 301, books, None, False)
+        with patch.object(source, '_stream_book_feed', side_effect=TimeoutError('timed out')) as fetch:
+            first, more = source.catalog_books('/opds/genres/A', path, 1, 12)
+        self.assertEqual([book.id for book in first], [str(i) for i in range(12)])
+        self.assertTrue(more)
+        self.assertEqual(fetch.call_count, 1)
 
     def test_expired_book_page_does_not_mask_a_missing_source_page(self):
         source = FlibustaSource()

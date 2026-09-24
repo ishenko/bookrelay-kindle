@@ -221,10 +221,10 @@ class FlibustaSource:
                         stale = (cached[1][:needed], cached[2] if cached[3] else None)
         for attempt in range(2):
             try:
-                # OPDS normally has 20 books per feed. Reading one extra entry
-                # lets us reach EOF and remember the next feed for later pages,
-                # while a larger feed still stops after a small prefix.
-                books, next_link, complete = self._stream_book_feed(path, max(needed, 21) if cache else needed)
+                # The first page needs only one book beyond the visible grid.
+                # Waiting for all twenty entries delays display when a large
+                # upstream feed pauses after the first thirteen books.
+                books, next_link, complete = self._stream_book_feed(path, needed)
                 if cache and len(books) <= 240:
                     with self._book_cache_lock:
                         previous = self._book_cache.get(path)
@@ -267,7 +267,9 @@ class FlibustaSource:
                             if root.tag != f"{ATOM}feed":
                                 raise SourceUnavailable("Flibusta returned an invalid catalog")
                         elif event == "end" and root is not None:
-                            if element.tag == f"{ATOM}link" and element in root and element.get("rel") == "next":
+                            if element is root:
+                                complete = True
+                            elif element.tag == f"{ATOM}link" and element in root and element.get("rel") == "next":
                                 next_link = element.get("href")
                             elif element.tag == f"{ATOM}entry" and element in root:
                                 book = parse_book_entry(element, self.base_url)

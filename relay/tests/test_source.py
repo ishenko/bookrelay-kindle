@@ -334,6 +334,34 @@ class FlibustaParserTests(unittest.TestCase):
         self.assertTrue(more)
         self.assertEqual(response.reads, 1)
 
+    def test_first_page_does_not_wait_for_twentieth_book(self):
+        class PausingResponse:
+            def __init__(self):
+                self.reads = 0
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read1(self, limit):
+                self.reads += 1
+                if self.reads > 1:
+                    raise TimeoutError('upstream paused after the first thirteen books')
+                entries = b''.join(
+                    (b'<entry><title>Book %d</title><link rel="http://opds-spec.org/acquisition/open-access" href="/b/%d/epub" /></entry>' % (i, i))
+                    for i in range(13)
+                )
+                return b'<feed xmlns="http://www.w3.org/2005/Atom">' + entries
+
+        response = PausingResponse()
+        with patch('bookrelay.source.flibusta.urlopen', return_value=response):
+            books, more = FlibustaSource().catalog_books('/opds/genres/Business', '/opds/genres/Business/141', 1, 12)
+        self.assertEqual([book.id for book in books], [str(i) for i in range(12)])
+        self.assertTrue(more)
+        self.assertEqual(response.reads, 1)
+
     def test_streamed_books_reuse_bounded_prefix_for_previous_page(self):
         class Response:
             def __init__(self):

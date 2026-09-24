@@ -655,10 +655,9 @@ static gboolean focus_widget_idle(gpointer userdata) {
 
 static void refocus_search_entry(App *app) {
     gint position = gtk_editable_get_position(GTK_EDITABLE(app->query));
-    /* GTK may select all text when an entry receives focus again. Preserve
-     * the caret so the next Kindle character appends instead of replacing. */
-    gtk_window_set_focus(GTK_WINDOW(app->window), NULL);
-    gtk_widget_grab_focus(app->query);
+    /* Keep the same focus path as the working settings fields. Do not clear
+     * the entry's input-method focus while Kindle is opening its overlay. */
+    gtk_window_set_focus(GTK_WINDOW(app->window), app->query);
     gtk_editable_select_region(GTK_EDITABLE(app->query), position, position);
 }
 
@@ -670,8 +669,8 @@ static gboolean focus_search_idle(gpointer userdata) {
          * Use the same order for search, after the icon release has finished. */
         virtual_keyboard_show_for(keyboard, GTK_ENTRY(app->query));
         keyboard->defer_search_open = FALSE;
-        /* The entry may still be GTK's logical focus from before the Kindle
-         * overlay took X focus. Re-enter it to activate its input method. */
+        /* Settings opens the keyboard, focuses the entry, then repeats the
+         * focus request once the pending GTK events have settled. */
         refocus_search_entry(app);
         g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, focus_widget_idle,
                         g_object_ref(app->query), g_object_unref);
@@ -2101,9 +2100,10 @@ static gboolean search_window_key_press(GtkWidget *widget, GdkEventKey *event, g
     cursor = gtk_editable_get_position(GTK_EDITABLE(app->query));
     gtk_widget_grab_focus(app->query);
     gtk_editable_select_region(GTK_EDITABLE(app->query), cursor, cursor);
-    /* Route the key to the search entry after Kindle restores focus to the
-     * application window. Stop window dispatch once the entry handles it. */
-    return gtk_widget_event(app->query, (GdkEvent *)event);
+    /* Let GtkWindow dispatch the original event to its newly focused child.
+     * Replaying a window event directly on GtkEntry loses the normal input
+     * method dispatch path used by the working settings fields. */
+    return FALSE;
 }
 
 static gboolean search_window_focus_in(GtkWidget *widget, GdkEventFocus *event, gpointer userdata) {
@@ -2113,9 +2113,8 @@ static gboolean search_window_focus_in(GtkWidget *widget, GdkEventFocus *event, 
      * as key presses. Restore that focus when Kindle returns to our window. */
     if (!app->page_window && app->view == VIEW_SEARCH &&
         GTK_WIDGET_MAPPED(app->query) && keyboard->native_open) {
-        /* A returned X focus does not imply the entry's IM context has focus.
-         * GTK can still report this entry as focused after the overlay left. */
-        refocus_search_entry(app);
+        if (gtk_window_get_focus(GTK_WINDOW(widget)) != app->query)
+            refocus_search_entry(app);
     }
     return FALSE;
 }

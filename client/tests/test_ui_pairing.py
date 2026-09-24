@@ -79,7 +79,10 @@ def main(binary: Path) -> None:
     assert len([request for request in requests if request == ("GET", "/v1/categories", None)]) == 2, requests
     searches = [parse_qs(urlsplit(path).query) for method, path, _ in requests
                 if method == "GET" and urlsplit(path).path == "/v1/search"]
-    assert searches == [{"q": ["test book"], "page": ["1"], "size": ["12"]}], requests
+    expected = [{"q": ["test book"], "page": ["1"], "size": ["12"]}]
+    if os.getenv("BOOKRELAY_TEST_NATIVE_SEARCH"):
+        expected.append({"q": ["z"], "page": ["1"], "size": ["12"]})
+    assert searches == expected, requests
 
 
 if __name__ == "__main__":

@@ -277,6 +277,30 @@ int main(int argc, char **argv) {
             g_error("could not deliver late release to search icon");
         drain_events();
         if (app.active_tasks) g_error("late release sent a duplicate search");
+        if (g_getenv("BOOKRELAY_TEST_NATIVE_SEARCH")) {
+            gint64 deadline;
+            search_keyboard = g_object_get_data(G_OBJECT(app.keyboard), "bookrelay-keyboard-state");
+            home_clicked(NULL, &app);
+            drain_events();
+            tap_search_icon(&app);
+            if (!search_keyboard->native_open || gtk_window_get_focus(GTK_WINDOW(app.window)) != app.query)
+                g_error("reopened search did not focus the entry with native keyboard");
+            gtk_entry_set_text(GTK_ENTRY(app.query), "");
+            if (!gdk_test_simulate_key(app.query->window, 12, 12, GDK_z, 0, GDK_KEY_PRESS) ||
+                !gdk_test_simulate_key(app.query->window, 12, 12, GDK_z, 0, GDK_KEY_RELEASE) ||
+                !gdk_test_simulate_key(app.query->window, 12, 12, GDK_Return, 0, GDK_KEY_PRESS) ||
+                !gdk_test_simulate_key(app.query->window, 12, 12, GDK_Return, 0, GDK_KEY_RELEASE))
+                g_error("could not type and submit reopened search");
+            deadline = g_get_monotonic_time() + 10 * G_USEC_PER_SEC;
+            while (app.active_tasks && g_get_monotonic_time() < deadline) {
+                drain_events();
+                g_usleep(10000);
+            }
+            drain_events();
+            if (app.active_tasks || g_strcmp0(gtk_entry_get_text(GTK_ENTRY(app.query)), "z") ||
+                search_keyboard->native_open)
+                g_error("reopened native search failed to submit on Enter and close keyboard");
+        }
         gtk_widget_destroy(app.window);
         bookrelay_config_free(app.config);
         bookrelay_favorites_free(app.favorites);

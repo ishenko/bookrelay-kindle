@@ -73,6 +73,7 @@ typedef struct {
     gboolean symbols;
     gboolean native_open;
     gboolean native_unavailable;
+    gboolean defer_search_open;
     GPtrArray *letter_buttons;
 } VirtualKeyboard;
 
@@ -246,7 +247,8 @@ static void virtual_keyboard_entry_activate(GtkEntry *entry, gpointer userdata) 
 
 static gboolean virtual_keyboard_focus_in(GtkWidget *widget, GdkEventFocus *event, gpointer userdata) {
     VirtualKeyboard *keyboard = userdata;
-    virtual_keyboard_show_for(keyboard, GTK_ENTRY(widget));
+    if (!keyboard->defer_search_open)
+        virtual_keyboard_show_for(keyboard, GTK_ENTRY(widget));
     return FALSE;
 }
 
@@ -649,20 +651,30 @@ static gboolean focus_widget_idle(gpointer userdata) {
     return FALSE;
 }
 
-static gboolean focus_search_idle(gpointer userdata) {
+static gboolean focus_search_keyboard_idle(gpointer userdata) {
     App *app = userdata;
+    VirtualKeyboard *keyboard = g_object_get_data(G_OBJECT(app->keyboard), "bookrelay-keyboard-state");
+    keyboard->defer_search_open = FALSE;
     if (!app->page_window && app->view == VIEW_SEARCH && GTK_WIDGET_MAPPED(app->query)) {
-        /* Match the working setup fields: focus the entry before LIPC opens,
-         * then restore focus after the overlay has been requested. */
-        gtk_window_set_focus(GTK_WINDOW(app->window), app->query);
-        gtk_widget_grab_focus(app->query);
-        virtual_keyboard_show_for(g_object_get_data(G_OBJECT(app->keyboard),
-                                                    "bookrelay-keyboard-state"),
-                                  GTK_ENTRY(app->query));
+        virtual_keyboard_show_for(keyboard, GTK_ENTRY(app->query));
         gtk_window_set_focus(GTK_WINDOW(app->window), app->query);
         gtk_widget_grab_focus(app->query);
         g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, focus_widget_idle,
                         g_object_ref(app->query), g_object_unref);
+    }
+    return FALSE;
+}
+
+static gboolean focus_search_idle(gpointer userdata) {
+    App *app = userdata;
+    VirtualKeyboard *keyboard = g_object_get_data(G_OBJECT(app->keyboard), "bookrelay-keyboard-state");
+    if (!app->page_window && app->view == VIEW_SEARCH && GTK_WIDGET_MAPPED(app->query)) {
+        /* Finish GTK focus-in before opening the external keyboard. */
+        gtk_window_set_focus(GTK_WINDOW(app->window), app->query);
+        gtk_widget_grab_focus(app->query);
+        g_idle_add(focus_search_keyboard_idle, app);
+    } else {
+        keyboard->defer_search_open = FALSE;
     }
     return FALSE;
 }
@@ -1969,6 +1981,8 @@ static void search_icon_clicked(GtkButton *button, gpointer userdata) {
     app->page = 1;
     app->has_next = FALSE;
     advance_generation(app);
+    ((VirtualKeyboard *)g_object_get_data(G_OBJECT(app->keyboard),
+                                          "bookrelay-keyboard-state"))->defer_search_open = TRUE;
     gtk_label_set_text(GTK_LABEL(app->section_title), "Поиск книг");
     gtk_widget_hide(app->breadcrumb_row);
     clear_results(app);

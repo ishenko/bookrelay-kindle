@@ -31,6 +31,19 @@ static void expect_search_keyboard_deferred(GtkWidget *widget, GdkEvent *event, 
         g_error("Kindle keyboard opened inside the search icon release handler");
 }
 
+static gboolean first_search_focus_seen;
+
+static gboolean expect_search_focus_before_keyboard(GtkWidget *widget, GdkEventFocus *event, gpointer userdata) {
+    App *app = userdata;
+    VirtualKeyboard *keyboard = g_object_get_data(G_OBJECT(app->keyboard), "bookrelay-keyboard-state");
+    if (!first_search_focus_seen) {
+        if (keyboard->native_open)
+            g_error("Kindle keyboard opened during initial search focus-in");
+        first_search_focus_seen = TRUE;
+    }
+    return FALSE;
+}
+
 static void wait_for_pairing(App *app, gboolean expect_error) {
     gint64 deadline = g_get_monotonic_time() + 10 * G_USEC_PER_SEC;
     while (g_get_monotonic_time() < deadline) {
@@ -284,9 +297,8 @@ int main(int argc, char **argv) {
         gtk_widget_destroy(settings->window);
         app.catalog_ready = TRUE;
         search_keyboard = g_object_get_data(G_OBJECT(app.keyboard), "bookrelay-keyboard-state");
-        /* Opening from focus-in is too late for the device keyboard: check
-         * the toolbar path independently of that fallback handler. */
-        g_signal_handlers_block_by_func(app.query, virtual_keyboard_focus_in, search_keyboard);
+        /* Exercise the production focus handler, including the icon path. */
+        g_signal_connect_after(app.query, "focus-in-event", G_CALLBACK(expect_search_focus_before_keyboard), &app);
         g_signal_connect(app.search_icon, "event-after", G_CALLBACK(expect_search_keyboard_deferred), &app);
         /* A real click bubbles to the window's background-tap handler. */
         if (!gdk_test_simulate_button(app.search_icon->window,
@@ -305,6 +317,8 @@ int main(int argc, char **argv) {
             g_error("could not release search icon");
         drain_events();
         expect_visible(app.query, "native search entry");
+        if (!first_search_focus_seen)
+            g_error("search entry never received focus-in before opening the keyboard");
         if (gtk_window_get_focus(GTK_WINDOW(app.window)) != app.query)
             g_error("native search entry did not receive keyboard focus");
         search_keyboard = g_object_get_data(G_OBJECT(app.keyboard), "bookrelay-keyboard-state");

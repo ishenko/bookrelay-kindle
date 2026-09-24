@@ -7,11 +7,11 @@
     "bookrelay-kindle": {
       "name": "BookRelay Kindle",
       "author": "BookRelay contributors",
-      "description": "Search the BookRelay catalog and send EPUB books through Amazon Send to Kindle.",
+      "description": "Search the BookRelay catalog and send EPUB or PDF books through Amazon Send to Kindle.",
       "artifacts": [
         {
-          "url": "https://github.com/ishenko/bookrelay-kindle/releases/download/v0.1.26/bookrelay-kindle-kindlehf.kpkg",
-          "version": [0, 1, 26],
+          "url": "https://github.com/ishenko/bookrelay-kindle/releases/download/v0.1.27/bookrelay-kindle-kindlehf.kpkg",
+          "version": [0, 1, 27],
           "dependencies": [],
           "supported_platforms": ["kindlehf"]
         }

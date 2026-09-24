@@ -150,6 +150,22 @@ class FlibustaParserTests(unittest.TestCase):
             self.assertEqual(FlibustaSource().download('123'), payload)
         self.assertEqual(response.limit, MAX_EPUB_BYTES + 1)
 
+    def test_pdf_returned_by_epub_endpoint_is_not_rejected_as_epub(self):
+        payload = b"%PDF-1.4" + bytes([10]) + b"%%EOF" + bytes([10])
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self, limit):
+                return payload
+
+        with patch('bookrelay.source.flibusta.urlopen', return_value=Response()):
+            self.assertEqual(FlibustaSource().download('471075'), payload)
+
     def test_catalog_uses_stale_cached_feed_during_source_outage(self):
         class StubSource(FlibustaSource):
             def __init__(self):

@@ -5,6 +5,7 @@ from email.message import EmailMessage
 
 
 MAX_EPUB_BYTES = 200 * 1024 * 1024
+MAX_PDF_BYTES = MAX_EPUB_BYTES
 
 
 def validate_epub(payload: bytes, max_bytes: int = MAX_EPUB_BYTES):
@@ -21,15 +22,33 @@ def validate_epub(payload: bytes, max_bytes: int = MAX_EPUB_BYTES):
         raise ValueError("payload is not a valid EPUB") from exc
 
 
-def build_epub_email(sender: str, recipient: str, filename: str, payload: bytes) -> bytes:
+def detect_book_format(payload: bytes) -> str:
+    if payload.startswith(b"%PDF-"):
+        if (len(payload) > MAX_PDF_BYTES or len(payload) < 8 or
+                b"%%EOF" not in payload[-1024:]):
+            raise ValueError("PDF is incomplete or exceeds the configured size limit")
+        return "pdf"
     validate_epub(payload)
+    return "epub"
+
+
+def build_book_email(sender: str, recipient: str, filename: str, payload: bytes) -> bytes:
+    book_format = detect_book_format(payload)
+    if not filename.lower().endswith("." + book_format):
+        raise ValueError("attachment filename does not match the book format")
     message = EmailMessage()
     message["From"] = sender
     message["To"] = recipient
     message["Subject"] = "BookRelay delivery"
-    message.set_content("BookRelay attached your EPUB. Kindle will process it through Send to Kindle.")
-    message.add_attachment(payload, maintype="application", subtype="epub+zip", filename=filename)
+    message.set_content(f"BookRelay attached your {book_format.upper()}. Kindle will process it through Send to Kindle.")
+    message.add_attachment(payload, maintype="application",
+                           subtype="pdf" if book_format == "pdf" else "epub+zip", filename=filename)
     return message.as_bytes()
+
+
+def build_epub_email(sender: str, recipient: str, filename: str, payload: bytes) -> bytes:
+    validate_epub(payload)
+    return build_book_email(sender, recipient, filename, payload)
 
 
 class SmtpMailer:
@@ -42,7 +61,7 @@ class SmtpMailer:
         self.use_tls = use_tls
 
     def send(self, recipient: str, filename: str, payload: bytes):
-        raw = build_epub_email(self.sender, recipient, filename, payload)
+        raw = build_book_email(self.sender, recipient, filename, payload)
         with smtplib.SMTP(self.host, self.port, timeout=30) as smtp:
             if self.use_tls:
                 smtp.starttls()

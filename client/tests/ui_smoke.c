@@ -32,6 +32,18 @@ static void expect_search_keyboard_deferred(GtkWidget *widget, GdkEvent *event, 
 }
 
 static gboolean first_search_focus_seen;
+static guint search_focus_out_count;
+static guint search_focus_in_count;
+
+static gboolean count_search_focus_out(GtkWidget *widget, GdkEventFocus *event, gpointer userdata) {
+    search_focus_out_count++;
+    return FALSE;
+}
+
+static gboolean count_search_focus_in(GtkWidget *widget, GdkEventFocus *event, gpointer userdata) {
+    search_focus_in_count++;
+    return FALSE;
+}
 
 static gboolean expect_search_keyboard_before_focus(GtkWidget *widget, GdkEventFocus *event, gpointer userdata) {
     App *app = userdata;
@@ -337,6 +349,8 @@ int main(int argc, char **argv) {
         search_keyboard = g_object_get_data(G_OBJECT(app.keyboard), "bookrelay-keyboard-state");
         /* Exercise the production focus handler, including the icon path. */
         g_signal_connect_after(app.query, "focus-in-event", G_CALLBACK(expect_search_keyboard_before_focus), &app);
+        g_signal_connect(app.query, "focus-out-event", G_CALLBACK(count_search_focus_out), NULL);
+        g_signal_connect(app.query, "focus-in-event", G_CALLBACK(count_search_focus_in), NULL);
         g_signal_connect(app.search_icon, "event-after", G_CALLBACK(expect_search_keyboard_deferred), &app);
         /* A real click bubbles to the window's background-tap handler. */
         if (!gdk_test_simulate_button(app.search_icon->window,
@@ -388,6 +402,8 @@ int main(int argc, char **argv) {
         {
             GdkEventFocus returned = {0};
             gboolean handled = FALSE;
+            guint focus_out_before = search_focus_out_count;
+            guint focus_in_before = search_focus_in_count;
             returned.type = GDK_FOCUS_CHANGE;
             returned.in = TRUE;
             /* Kindle can return X focus while GTK still believes the search
@@ -395,6 +411,8 @@ int main(int argc, char **argv) {
             if (gtk_window_get_focus(GTK_WINDOW(app.window)) != app.query)
                 g_error("search lost logical focus before Kindle returned");
             g_signal_emit_by_name(app.window, "focus-in-event", &returned, &handled);
+            if (search_focus_out_count <= focus_out_before || search_focus_in_count <= focus_in_before)
+                g_error("Kindle return did not reactivate the search entry input method");
         }
         if (gtk_window_get_focus(GTK_WINDOW(app.window)) != app.query)
             g_error("search did not restore entry focus when Kindle returned to the window");

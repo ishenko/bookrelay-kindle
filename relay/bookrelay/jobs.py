@@ -4,16 +4,16 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .delivery import validate_epub
+from .delivery import detect_book_format
 
 
 def now_iso():
     return datetime.now(timezone.utc).isoformat()
 
 
-def safe_filename(title: str) -> str:
+def safe_filename(title: str, book_format: str = "epub") -> str:
     value = re.sub(r"[^A-Za-z0-9А-Яа-я _.-]+", "", title).strip(" .") or "book"
-    return f"{value.replace(' ', '_')}.epub"
+    return f"{value.replace(' ', '_')}.{book_format}"
 
 
 class JobStore:
@@ -80,9 +80,9 @@ class DeliveryService:
         try:
             self.jobs.update(job_id, "downloading")
             payload = self.source.download(job["book_id"])
-            validate_epub(payload)
+            book_format = detect_book_format(payload)
             self.jobs.update(job_id, "sending")
-            self.mailer.send(job["kindle_email"], safe_filename(job["title"]), payload)
+            self.mailer.send(job["kindle_email"], safe_filename(job["title"], book_format), payload)
             self.jobs.update(job_id, "sent")
         except Exception as exc:
             self.jobs.update(job_id, "failed", str(exc))

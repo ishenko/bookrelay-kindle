@@ -3,8 +3,8 @@
   "id": "bookrelay-kindle",
   "name": "BookRelay Kindle",
   "author": "BookRelay contributors",
-  "description": "Search a self-hosted relay and send EPUB books through Amazon Send to Kindle.",
-  "version": [0, 1, 26],
+  "description": "Search a self-hosted relay and send EPUB or PDF books through Amazon Send to Kindle.",
+  "version": [0, 1, 27],
   "dependencies": [],
   "supported_platforms": ["kindlehf"],
   "bookrelay_min_firmware": "5.19.0"

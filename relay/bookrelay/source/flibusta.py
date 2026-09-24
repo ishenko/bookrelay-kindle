@@ -11,7 +11,7 @@ from xml.etree import ElementTree as ET
 from urllib.parse import quote_plus, urljoin, urlsplit
 from urllib.request import Request, urlopen
 
-from ..delivery import MAX_EPUB_BYTES, validate_epub
+from ..delivery import MAX_EPUB_BYTES, detect_book_format
 from ..models import Book
 
 
@@ -371,6 +371,8 @@ class FlibustaSource:
         return Book(id=book_id, title=clean_text(title_match.group(1)) if title_match else book_id)
 
     def download(self, book_id: str) -> bytes:
+        # The source sometimes serves a PDF at its /epub URL. Validate the
+        # actual bytes before choosing the mail attachment format.
         payload = self._get(f"/b/{book_id}/epub", max_bytes=MAX_EPUB_BYTES)
-        validate_epub(payload)
+        detect_book_format(payload)
         return payload

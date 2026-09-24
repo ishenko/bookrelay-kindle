@@ -57,6 +57,20 @@ class DeliveryServiceTests(unittest.TestCase):
             self.assertEqual(result["status"], "failed")
             self.assertIn("source unavailable", result["error"])
 
+    def test_pdf_delivery_uses_pdf_extension(self):
+        class PdfSource:
+            def download(self, book_id):
+                return b"%PDF-1.4" + bytes([10]) + b"%%EOF" + bytes([10])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = JobStore(Path(tmp) / "jobs.sqlite3")
+            mailer = FakeMailer()
+            service = DeliveryService(store, PdfSource(), mailer)
+            job = service.enqueue("471075", "reader@kindle.com", "A PDF Book")
+            service.run(job["id"])
+            self.assertEqual(store.get(job["id"])["status"], "sent")
+            self.assertEqual(mailer.sent[0][1], "A_PDF_Book.pdf")
+
 
 if __name__ == "__main__":
     unittest.main()

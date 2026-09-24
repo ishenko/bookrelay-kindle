@@ -2004,7 +2004,7 @@ static void help_clicked(GtkButton *button, gpointer userdata) {
     GtkWidget *body, *actions, *page, *label, *close_button;
     page = new_kindle_page(app, "Как пользоваться", &body, &actions);
     if (!page) return;
-    label = gtk_label_new("1. Подключите relay в настройках: укажите адрес сервера и одноразовый код.\n\n2. Выберите категорию и подкатегорию или найдите книгу через поиск.\n\n3. Нажмите на обложку книги и выберите «Скачать на Kindle». EPUB будет отправлен на адрес вашего Kindle.\n\nЗвезда на странице книги добавляет её в избранное или убирает оттуда. Звезда в верхней панели открывает избранное. Иконка домика возвращает на главную. Стрелки внизу перелистывают страницы.");
+    label = gtk_label_new("1. Подключите relay в настройках: укажите адрес сервера и одноразовый код.\n\n2. Выберите категорию и подкатегорию или найдите книгу через поиск.\n\n3. Нажмите на обложку книги и выберите «Скачать на Kindle». EPUB или PDF будет отправлен на адрес вашего Kindle.\n\nЗвезда на странице книги добавляет её в избранное или убирает оттуда. Звезда в верхней панели открывает избранное. Иконка домика возвращает на главную. Стрелки внизу перелистывают страницы.");
     set_large_font(label, "Sans 22");
     gtk_label_set_line_wrap(GTK_LABEL(label), TRUE);
     gtk_misc_set_alignment(GTK_MISC(label), 0, 0);
@@ -2113,8 +2113,13 @@ static gboolean search_window_focus_in(GtkWidget *widget, GdkEventFocus *event, 
      * as key presses. Restore that focus when Kindle returns to our window. */
     if (!app->page_window && app->view == VIEW_SEARCH &&
         GTK_WIDGET_MAPPED(app->query) && keyboard->native_open) {
-        if (gtk_window_get_focus(GTK_WINDOW(widget)) != app->query)
-            refocus_search_entry(app);
+        /* Kindle's input overlay can return X focus while GtkWindow still
+         * reports the entry as focused. In that case GtkEntry never receives
+         * another focus-in, so its input method stays inactive even though
+         * the system keyboard is visible. Force a real focus transition. */
+        if (gtk_window_get_focus(GTK_WINDOW(widget)) == app->query)
+            gtk_window_set_focus(GTK_WINDOW(widget), NULL);
+        refocus_search_entry(app);
     }
     return FALSE;
 }
@@ -2294,7 +2299,7 @@ static void build_ui(App *app) {
     g_signal_connect(app->last_page, "clicked", G_CALLBACK(last_page_clicked), app);
     g_signal_connect(app->window, "delete-event", G_CALLBACK(delete_event), app);
     g_signal_connect(app->window, "key-press-event", G_CALLBACK(search_window_key_press), app);
-    g_signal_connect(app->window, "focus-in-event", G_CALLBACK(search_window_focus_in), app);
+    g_signal_connect_after(app->window, "focus-in-event", G_CALLBACK(search_window_focus_in), app);
     gtk_widget_add_events(app->window, GDK_BUTTON_PRESS_MASK);
     g_signal_connect(app->window, "button-press-event", G_CALLBACK(virtual_keyboard_background_press), app);
     gtk_widget_show_all(app->window);

@@ -25,6 +25,8 @@ typedef struct {
     GtkWidget *query;
     GtkWidget *search_row;
     GtkWidget *search_icon;
+    guint search_press_timeout;
+    gboolean search_press_handled;
     GtkWidget *header_title;
     GtkWidget *home_button;
     GtkWidget *breadcrumb_row;
@@ -2033,9 +2035,45 @@ static gboolean home_icon_pressed(GtkWidget *widget, GdkEventButton *event, gpoi
     return TRUE;
 }
 
-static gboolean search_icon_released(GtkWidget *widget, GdkEventButton *event, gpointer userdata) {
-    if (event->button == 1) search_icon_clicked(NULL, userdata);
+static gboolean search_icon_press_timeout(gpointer userdata) {
+    App *app = userdata;
+    app->search_press_timeout = 0;
+    app->search_press_handled = TRUE;
+    search_icon_clicked(NULL, app);
+    return FALSE;
+}
+
+static gboolean search_icon_pressed(GtkWidget *widget, GdkEventButton *event, gpointer userdata) {
+    App *app = userdata;
+    if (event->button != 1) return FALSE;
+    if (app->search_press_timeout) g_source_remove(app->search_press_timeout);
+    app->search_press_handled = FALSE;
+    /* Kindle touch input may omit button-release. Give a normal tap time to
+     * finish before falling back to the press event. */
+    app->search_press_timeout = g_timeout_add(250, search_icon_press_timeout, app);
     return TRUE;
+}
+
+static gboolean search_icon_released(GtkWidget *widget, GdkEventButton *event, gpointer userdata) {
+    App *app = userdata;
+    if (event->button != 1) return FALSE;
+    if (app->search_press_timeout) {
+        g_source_remove(app->search_press_timeout);
+        app->search_press_timeout = 0;
+    }
+    if (!app->search_press_handled) {
+        app->search_press_handled = TRUE;
+        search_icon_clicked(NULL, app);
+    }
+    return TRUE;
+}
+
+static void search_icon_window_destroyed(GtkWidget *widget, gpointer userdata) {
+    App *app = userdata;
+    if (app->search_press_timeout) {
+        g_source_remove(app->search_press_timeout);
+        app->search_press_timeout = 0;
+    }
 }
 
 static gboolean search_window_key_press(GtkWidget *widget, GdkEventKey *event, gpointer userdata) {
@@ -2053,6 +2091,18 @@ static gboolean search_window_key_press(GtkWidget *widget, GdkEventKey *event, g
     /* Route the key to the search entry after Kindle restores focus to the
      * application window. Stop window dispatch once the entry handles it. */
     return gtk_widget_event(app->query, (GdkEvent *)event);
+}
+
+static gboolean search_window_focus_in(GtkWidget *widget, GdkEventFocus *event, gpointer userdata) {
+    App *app = userdata;
+    VirtualKeyboard *keyboard = g_object_get_data(G_OBJECT(app->keyboard), "bookrelay-keyboard-state");
+    /* Input methods send composed text to the focused entry, not necessarily
+     * as key presses. Restore that focus when Kindle returns to our window. */
+    if (!app->page_window && app->view == VIEW_SEARCH &&
+        GTK_WIDGET_MAPPED(app->query) && keyboard->native_open &&
+        gtk_window_get_focus(GTK_WINDOW(widget)) != app->query)
+        gtk_widget_grab_focus(app->query);
+    return FALSE;
 }
 
 static gboolean favorites_icon_pressed(GtkWidget *widget, GdkEventButton *event, gpointer userdata) {
@@ -2213,7 +2263,9 @@ static void build_ui(App *app) {
     gtk_widget_set_no_show_all(app->status, TRUE);
     gtk_notebook_append_page(GTK_NOTEBOOK(app->pages), root, NULL);
     gtk_container_add(GTK_CONTAINER(app->window), shell);
+    g_signal_connect(search_icon, "button-press-event", G_CALLBACK(search_icon_pressed), app);
     g_signal_connect(search_icon, "button-release-event", G_CALLBACK(search_icon_released), app);
+    g_signal_connect(app->window, "destroy", G_CALLBACK(search_icon_window_destroyed), app);
     g_signal_connect(favorites_icon, "button-press-event", G_CALLBACK(favorites_icon_pressed), app);
     g_signal_connect(settings_icon, "button-press-event", G_CALLBACK(settings_icon_pressed), app);
     g_signal_connect(help_icon, "button-press-event", G_CALLBACK(help_icon_pressed), app);
@@ -2228,6 +2280,7 @@ static void build_ui(App *app) {
     g_signal_connect(app->last_page, "clicked", G_CALLBACK(last_page_clicked), app);
     g_signal_connect(app->window, "delete-event", G_CALLBACK(delete_event), app);
     g_signal_connect(app->window, "key-press-event", G_CALLBACK(search_window_key_press), app);
+    g_signal_connect(app->window, "focus-in-event", G_CALLBACK(search_window_focus_in), app);
     gtk_widget_add_events(app->window, GDK_BUTTON_PRESS_MASK);
     g_signal_connect(app->window, "button-press-event", G_CALLBACK(virtual_keyboard_background_press), app);
     gtk_widget_show_all(app->window);

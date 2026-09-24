@@ -246,10 +246,17 @@ int main(int argc, char **argv) {
         if (g_strcmp0(gtk_entry_get_text(GTK_ENTRY(app.query)), "test bookx") != 0)
             g_error("search lost key after Kindle restored window focus");
         gtk_entry_set_text(GTK_ENTRY(app.query), "test book");
-        tap_search_icon(&app);
+        /* Some Kindle touch paths deliver a press without a release. Search
+         * must still submit the query after that tap. */
+        if (!gdk_test_simulate_button(app.search_icon->window,
+                                      app.search_icon->allocation.x + app.search_icon->allocation.width / 2,
+                                      app.search_icon->allocation.y + app.search_icon->allocation.height / 2,
+                                      1, 0, GDK_BUTTON_PRESS))
+            g_error("could not press search icon to submit");
         {
             gint64 deadline = g_get_monotonic_time() + 10 * G_USEC_PER_SEC;
-            while (app.active_tasks && g_get_monotonic_time() < deadline) {
+            while ((!find_data_button(app.results, "book-row") || app.active_tasks) &&
+                   g_get_monotonic_time() < deadline) {
                 drain_events();
                 g_usleep(10000);
             }
@@ -263,6 +270,13 @@ int main(int argc, char **argv) {
                 g_error("search icon did not load results from the relay (tasks=%u view=%u ready=%d row=%p status=%s)",
                         app.active_tasks, app.view, app.catalog_ready, row, gtk_label_get_text(GTK_LABEL(app.status)));
         }
+        if (!gdk_test_simulate_button(app.search_icon->window,
+                                      app.search_icon->allocation.x + app.search_icon->allocation.width / 2,
+                                      app.search_icon->allocation.y + app.search_icon->allocation.height / 2,
+                                      1, 0, GDK_BUTTON_RELEASE))
+            g_error("could not deliver late release to search icon");
+        drain_events();
+        if (app.active_tasks) g_error("late release sent a duplicate search");
         gtk_widget_destroy(app.window);
         bookrelay_config_free(app.config);
         bookrelay_favorites_free(app.favorites);
@@ -347,6 +361,16 @@ int main(int argc, char **argv) {
         drain_events();
         if (g_strcmp0(gtk_entry_get_text(GTK_ENTRY(app.query)), "ab") != 0)
             g_error("search did not recover from lost keyboard focus: text=%s focus=%p expected=%p", gtk_entry_get_text(GTK_ENTRY(app.query)), gtk_window_get_focus(GTK_WINDOW(app.window)), app.query);
+        gtk_window_set_focus(GTK_WINDOW(app.window), NULL);
+        {
+            GdkEventFocus returned = {0};
+            gboolean handled = FALSE;
+            returned.type = GDK_FOCUS_CHANGE;
+            returned.in = TRUE;
+            g_signal_emit_by_name(app.window, "focus-in-event", &returned, &handled);
+        }
+        if (gtk_window_get_focus(GTK_WINDOW(app.window)) != app.query)
+            g_error("search did not restore entry focus when Kindle returned to the window");
         snapshot(&app, argv[1], "search-native.png");
         gtk_widget_destroy(app.window);
         bookrelay_config_free(app.config);

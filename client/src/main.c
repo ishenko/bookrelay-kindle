@@ -656,31 +656,13 @@ static gboolean focus_widget_idle(gpointer userdata) {
 static gboolean open_search_keyboard_idle(gpointer userdata) {
     App *app = userdata;
     VirtualKeyboard *keyboard = g_object_get_data(G_OBJECT(app->keyboard), "bookrelay-keyboard-state");
-    if (!app->page_window && app->view == VIEW_SEARCH && GTK_WIDGET_MAPPED(app->query) &&
-        gtk_window_get_focus(GTK_WINDOW(app->window)) == app->query) {
-        /* Kindle snapshots the active GTK input target when LIPC opens its
-         * keyboard. Let the focus change finish in the previous main-loop
-         * iteration, as it does for the working settings entries. */
+    if (!app->page_window && app->view == VIEW_SEARCH && GTK_WIDGET_MAPPED(app->query)) {
+        /* Match the working settings inputs: open LIPC after the icon event,
+         * then focus the entry and reaffirm it after the overlay appears. */
         virtual_keyboard_show_for(keyboard, GTK_ENTRY(app->query));
-        /* The native overlay may take X focus as soon as it opens. Restore
-         * the entry just as the working settings form does after opening it. */
         gtk_window_set_focus(GTK_WINDOW(app->window), app->query);
         g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, focus_widget_idle,
                         g_object_ref(app->query), g_object_unref);
-    }
-    keyboard->defer_search_open = FALSE;
-    return FALSE;
-}
-
-static gboolean focus_search_idle(gpointer userdata) {
-    App *app = userdata;
-    VirtualKeyboard *keyboard = g_object_get_data(G_OBJECT(app->keyboard), "bookrelay-keyboard-state");
-    if (!app->page_window && app->view == VIEW_SEARCH && GTK_WIDGET_MAPPED(app->query)) {
-        gtk_widget_grab_focus(app->query);
-        if (gtk_window_get_focus(GTK_WINDOW(app->window)) == app->query) {
-            g_idle_add(open_search_keyboard_idle, app);
-            return FALSE;
-        }
     }
     keyboard->defer_search_open = FALSE;
     return FALSE;
@@ -2009,10 +1991,9 @@ static void search_icon_clicked(GtkButton *button, gpointer userdata) {
     update_pager(app);
     gtk_widget_hide(app->header_title);
     gtk_widget_show(app->search_row);
-    /* Focus the mapped entry while the app still owns X focus. Defer LIPC
-     * until the icon event has finished, as on the settings page. */
-    gtk_window_set_focus(GTK_WINDOW(app->window), app->query);
-    g_idle_add(focus_search_idle, app);
+    /* Like settings, open LIPC before focusing the entry, after the icon
+     * event so its background handler cannot close the keyboard. */
+    g_idle_add(open_search_keyboard_idle, app);
 }
 
 static void help_clicked(GtkButton *button, gpointer userdata) {

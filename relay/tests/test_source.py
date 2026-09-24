@@ -388,6 +388,10 @@ class FlibustaParserTests(unittest.TestCase):
 
     def test_cover_source_is_restricted_to_matching_book_and_host(self):
         source = FlibustaSource()
+        self.assertEqual(source.cover_path('123', 'https://flibusta.is/covers/123.jpg'),
+                         '/covers/123.jpg')
+        self.assertEqual(source.cover_path('123', 'https://flibusta.is/covers/123.png'),
+                         '/covers/123.png')
         self.assertEqual(source.cover_path('451198', 'https://flibusta.is/i/98/451198/cover.jpg'),
                          '/i/98/451198/cover.jpg')
         self.assertEqual(source.cover_path('659948', 'https://flibusta.is/i/48/659948/img_12'),
@@ -395,6 +399,8 @@ class FlibustaParserTests(unittest.TestCase):
         self.assertEqual(source.cover_path('626662', 'https://flibusta.is/i/62/626662/_1551035688_76.jpg'),
                          '/i/62/626662/_1551035688_76.jpg')
         for url in ('https://elsewhere.test/i/98/451198/cover.jpg',
+                    'https://flibusta.is/covers/123.jpg',
+                    'https://flibusta.is/covers/451198.jpg?from=other',
                     'https://flibusta.is/i/98/1/cover.jpg',
                     'https://flibusta.is/i/98/451198/cover.jpg?redirect=1',
                     'https://flibusta.is/i/98/451198/../secret',

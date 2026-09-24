@@ -93,7 +93,8 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
                 self.cover_requests = []
 
             def catalog_books(self, category, subcategory, page=1, size=6):
-                return [Book(id="451198", title="A Book", cover_url="https://flibusta.is/i/98/451198/img_12")], False
+                return [Book(id="451198", title="A Book", cover_url="https://flibusta.is/i/98/451198/img_12"),
+                        Book(id="123", title="Another Book", cover_url="https://flibusta.is/covers/123.jpg")], False
 
             def _get(self, path):
                 self.cover_requests.append(path)
@@ -116,9 +117,14 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(cover.content, b"\xff\xd8\xfftest-jpeg")
                 self.assertEqual(cover.headers["content-type"], "image/jpeg")
                 self.assertEqual(source.cover_requests, ["/i/98/451198/img_12"])
+                direct_url = catalog.json()["items"][1]["cover_url"]
+                self.assertEqual(direct_url, "/v1/books/123/cover?path=%2Fcovers%2F123.jpg")
+                direct_cover = await client.get(direct_url, headers=headers)
+                self.assertEqual(direct_cover.status_code, 200)
+                self.assertEqual(source.cover_requests, ["/i/98/451198/img_12", "/covers/123.jpg"])
                 rejected = await client.get("/v1/books/451198/cover", params={"path": "//elsewhere.test/secret"}, headers=headers)
                 self.assertEqual(rejected.status_code, 404)
-                self.assertEqual(len(source.cover_requests), 1)
+                self.assertEqual(len(source.cover_requests), 2)
 
     async def test_pair_page_shows_remaining_time_from_server_clock(self):
         with tempfile.TemporaryDirectory() as tmp:

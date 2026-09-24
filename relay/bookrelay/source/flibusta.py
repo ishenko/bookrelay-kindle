@@ -307,11 +307,12 @@ class FlibustaSource:
         origin, cover = urlsplit(self.base_url), urlsplit(cover_url)
         if not re.fullmatch(r"[0-9]+", book_id) or (cover.scheme, cover.netloc) != (origin.scheme, origin.netloc):
             raise ValueError("invalid cover URL")
-        # OPDS covers can have names such as img_12 or sol22.jpg, not just cover.jpg.
-        # Keep the request on the configured host and within this book's image folder.
+        # OPDS feeds also publish /covers/{book_id}.jpg thumbnails. Restrict
+        # both supported layouts to the same book on the configured host.
         filename = cover.path.rsplit("/", 1)[-1]
-        if (cover.query or cover.fragment or
-                not re.fullmatch(rf"/i/[0-9]{{1,2}}/{re.escape(book_id)}/[^/]+", cover.path) or
+        image_folder = re.fullmatch(rf"/i/[0-9]{{1,2}}/{re.escape(book_id)}/[^/]+", cover.path)
+        direct_cover = re.fullmatch(rf"/covers/{re.escape(book_id)}\.(?:jpg|jpeg|png)", cover.path, re.I)
+        if (cover.query or cover.fragment or not (image_folder or direct_cover) or
                 not re.fullmatch(r"[A-Za-z0-9_-][A-Za-z0-9._-]{0,95}", filename) or
                 ".." in filename):
             raise ValueError("invalid cover path")

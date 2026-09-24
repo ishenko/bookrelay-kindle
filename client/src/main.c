@@ -662,6 +662,11 @@ static gboolean open_search_keyboard_idle(gpointer userdata) {
          * keyboard. Let the focus change finish in the previous main-loop
          * iteration, as it does for the working settings entries. */
         virtual_keyboard_show_for(keyboard, GTK_ENTRY(app->query));
+        /* The native overlay may take X focus as soon as it opens. Restore
+         * the entry just as the working settings form does after opening it. */
+        gtk_window_set_focus(GTK_WINDOW(app->window), app->query);
+        g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, focus_widget_idle,
+                        g_object_ref(app->query), g_object_unref);
     }
     keyboard->defer_search_open = FALSE;
     return FALSE;

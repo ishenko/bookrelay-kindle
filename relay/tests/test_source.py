@@ -5,6 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from time import monotonic
 from urllib.error import HTTPError
+from urllib.error import URLError
 from unittest.mock import patch
 
 from bookrelay.delivery import MAX_EPUB_BYTES
@@ -76,6 +77,18 @@ class FlibustaParserTests(unittest.TestCase):
             with self.assertRaises(SourceUnavailable):
                 FlibustaSource().subcategories('/opds/genres/A')
             self.assertEqual(fetch.call_count, 1)
+
+    def test_upstream_timeout_does_not_double_catalog_or_book_wait(self):
+        for failure in (TimeoutError('timed out'), URLError(TimeoutError('timed out'))):
+            with self.subTest(failure=type(failure).__name__):
+                with patch('bookrelay.source.flibusta.urlopen', side_effect=failure) as fetch:
+                    with self.assertRaises(SourceUnavailable):
+                        FlibustaSource().categories()
+                    self.assertEqual(fetch.call_count, 1)
+                with patch('bookrelay.source.flibusta.urlopen', side_effect=failure) as fetch:
+                    with self.assertRaises(SourceUnavailable):
+                        FlibustaSource().catalog_books('/opds/genres/A', '/opds/genres/A/1', 1, 12)
+                    self.assertEqual(fetch.call_count, 1)
 
     def test_invalid_cover_link_does_not_break_book_page(self):
         feed = (b'<feed xmlns="http://www.w3.org/2005/Atom">'

@@ -2,6 +2,7 @@ import html
 import http.client
 import json
 import re
+import socket
 from collections import OrderedDict
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -27,7 +28,13 @@ class SourceUnavailable(Exception):
 def retryable_source_error(exc: Exception) -> bool:
     # Missing books and covers will not appear on a second request. The OPDS
     # host does intermittently fail with 5xx or a dropped connection.
-    return not isinstance(exc, HTTPError) or exc.code == 429 or exc.code >= 500
+    if isinstance(exc, HTTPError):
+        return exc.code == 429 or exc.code >= 500
+    # A second full timeout makes a stalled catalog appear frozen for twice
+    # the configured timeout. Retry dropped connections, but fail fast when
+    # the upstream is simply not answering.
+    reason = exc.reason if isinstance(exc, URLError) else exc
+    return not isinstance(reason, (TimeoutError, socket.timeout))
 
 
 def parse_feed_root(payload: bytes) -> ET.Element:

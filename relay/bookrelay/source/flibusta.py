@@ -11,7 +11,7 @@ from xml.etree import ElementTree as ET
 from urllib.parse import quote_plus, urljoin, urlsplit
 from urllib.request import Request, urlopen
 
-from ..delivery import validate_epub
+from ..delivery import MAX_EPUB_BYTES, validate_epub
 from ..models import Book
 
 
@@ -143,14 +143,14 @@ class FlibustaSource:
         self._book_cache: OrderedDict[str, tuple[float, list[Book], str | None, bool]] = OrderedDict()
         self._book_cache_lock = Lock()
 
-    def _get(self, path: str) -> bytes:
+    def _get(self, path: str, max_bytes: int = 25 * 1024 * 1024) -> bytes:
         request = Request(urljoin(self.base_url + "/", path.lstrip("/")), headers={"User-Agent": "BookRelay/0.1"})
         for attempt in range(2):
             try:
                 with urlopen(request, timeout=self.timeout) as response:
-                    payload = response.read(25 * 1024 * 1024 + 1)
-                    if len(payload) > 25 * 1024 * 1024:
-                        raise SourceUnavailable("Flibusta response exceeds 25 MiB")
+                    payload = response.read(max_bytes + 1)
+                    if len(payload) > max_bytes:
+                        raise SourceUnavailable("Flibusta response exceeds the size limit")
                     return payload
             except (HTTPError, URLError, OSError, TimeoutError, http.client.HTTPException) as exc:
                 if attempt or not retryable_source_error(exc):
@@ -333,6 +333,6 @@ class FlibustaSource:
         return Book(id=book_id, title=clean_text(title_match.group(1)) if title_match else book_id)
 
     def download(self, book_id: str) -> bytes:
-        payload = self._get(f"/b/{book_id}/epub")
+        payload = self._get(f"/b/{book_id}/epub", max_bytes=MAX_EPUB_BYTES)
         validate_epub(payload)
         return payload

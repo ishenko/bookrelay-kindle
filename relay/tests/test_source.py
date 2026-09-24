@@ -6,7 +6,9 @@ from tempfile import TemporaryDirectory
 from urllib.error import HTTPError
 from unittest.mock import patch
 
+from bookrelay.delivery import MAX_EPUB_BYTES
 from bookrelay.source.flibusta import FlibustaSource, SourceUnavailable, parse_opds_feed, parse_search_page
+from test_delivery import make_epub
 
 
 class FlibustaParserTests(unittest.TestCase):
@@ -107,8 +109,27 @@ class FlibustaParserTests(unittest.TestCase):
                 return b"x" * limit
 
         with patch("bookrelay.source.flibusta.urlopen", return_value=OversizedResponse()):
-            with self.assertRaisesRegex(SourceUnavailable, "exceeds 25 MiB"):
+            with self.assertRaisesRegex(SourceUnavailable, "exceeds the size limit"):
                 FlibustaSource().categories()
+
+    def test_epub_download_uses_epub_limit_instead_of_catalog_limit(self):
+        payload = make_epub()
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self, limit):
+                self.limit = limit
+                return payload
+
+        response = Response()
+        with patch('bookrelay.source.flibusta.urlopen', return_value=response):
+            self.assertEqual(FlibustaSource().download('123'), payload)
+        self.assertEqual(response.limit, MAX_EPUB_BYTES + 1)
 
     def test_catalog_uses_stale_cached_feed_during_source_outage(self):
         class StubSource(FlibustaSource):
